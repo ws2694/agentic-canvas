@@ -1,12 +1,23 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 export type ChatMessage = {
   id: string;
   role: "user" | "assistant";
   text: string;
+  notes?: string[];
 };
+
+function Markdown({ text }: { text: string }) {
+  return (
+    <div className="space-y-2 [&_a]:text-amber-700 [&_a]:underline [&_code]:rounded [&_code]:bg-neutral-100 [&_code]:px-1 [&_code]:py-0.5 [&_code]:text-[0.85em] [&_li]:ml-4 [&_li]:list-disc [&_ol_li]:list-decimal [&_strong]:font-semibold">
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
+    </div>
+  );
+}
 
 const PROMPTS = [
   "Sketch the architecture for a URL shortener",
@@ -82,10 +93,16 @@ export function AgentPanel({
               </div>
             </div>
           ) : (
-            <div key={m.id} className="flex justify-start">
-              <div className="max-w-[90%] whitespace-pre-wrap text-sm leading-relaxed text-neutral-700">
-                {m.text || <span className="text-neutral-300">…</span>}
+            <div key={m.id} className="flex flex-col items-start gap-1.5">
+              <div className="max-w-[92%] text-sm leading-relaxed text-neutral-700">
+                {m.text ? <Markdown text={m.text} /> : <span className="text-neutral-300">…</span>}
               </div>
+              {m.notes?.map((note, i) => (
+                <div key={i} className="flex items-start gap-1.5 pl-0.5 text-xs italic text-amber-700/80">
+                  <span aria-hidden>✎</span>
+                  <span>{note}</span>
+                </div>
+              ))}
             </div>
           ),
         )}

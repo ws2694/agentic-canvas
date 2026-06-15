@@ -9,21 +9,84 @@ type AnyElement = Record<string, any>;
 // (arrow start/end -> shape id) resolve when the batch is converted together.
 export async function convertSkeletons(skeletons: SkeletonElement[]): Promise<AnyElement[]> {
   const { convertToExcalidrawElements } = await import("@excalidraw/excalidraw");
-  const clean = skeletons.filter(Boolean).map(normalize);
+  const clean = withArrowGeometry(skeletons.filter(Boolean)).map(normalize);
   try {
     return convertToExcalidrawElements(clean as any) as AnyElement[];
-  } catch {
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn("[canvas] batch convert failed, falling back:", err);
     // One bad element shouldn't drop the whole batch — convert what we can.
     const out: AnyElement[] = [];
     for (const s of clean) {
       try {
         out.push(...(convertToExcalidrawElements([s] as any) as AnyElement[]));
-      } catch {
-        /* skip */
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.warn("[canvas] dropped element:", s.type, s.id, e);
       }
     }
     return out;
   }
+}
+
+// An arrow/line that only carries `start`/`end` bindings has no geometry, so
+// Excalidraw renders it zero-length (invisible). Derive x/y/width/height from
+// the shapes it connects. Bindings stay, so Excalidraw still clips the endpoints
+// to the shape edges and re-routes when shapes move.
+type Pt = { x: number; y: number };
+
+function center(s: SkeletonElement): Pt {
+  return { x: s.x + (s.width ?? 100) / 2, y: s.y + (s.height ?? 60) / 2 };
+}
+
+// Point on a shape's boundary along the ray from its center toward `toward`,
+// pushed out by a small gap so the arrowhead doesn't touch the box.
+function edgePoint(s: SkeletonElement, toward: Pt, gap = 6): Pt {
+  const c = center(s);
+  const dx = toward.x - c.x;
+  const dy = toward.y - c.y;
+  if (dx === 0 && dy === 0) return c;
+  const hw = (s.width ?? 100) / 2;
+  const hh = (s.height ?? 60) / 2;
+  const tx = dx !== 0 ? hw / Math.abs(dx) : Infinity;
+  const ty = dy !== 0 ? hh / Math.abs(dy) : Infinity;
+  const t = Math.min(tx, ty);
+  const len = Math.hypot(dx, dy);
+  const g = len ? gap / len : 0;
+  return { x: c.x + dx * (t + g), y: c.y + dy * (t + g) };
+}
+
+function withArrowGeometry(skeletons: SkeletonElement[]): SkeletonElement[] {
+  const shapes = new Map<string, SkeletonElement>();
+  for (const s of skeletons) {
+    if (s.id && s.type !== "arrow" && s.type !== "line") shapes.set(s.id, s);
+  }
+  const fixedPoint = (ref?: { id?: string; x?: number; y?: number }): Pt | null =>
+    ref && typeof ref.x === "number" && typeof ref.y === "number" ? { x: ref.x, y: ref.y } : null;
+  const shapeOf = (ref?: { id?: string }) =>
+    ref?.id && shapes.has(ref.id) ? shapes.get(ref.id)! : null;
+
+  return skeletons.map((s) => {
+    if (s.type !== "arrow" && s.type !== "line") return s;
+    const hasGeometry =
+      Array.isArray((s as AnyElement).points) ||
+      (typeof s.width === "number" && typeof s.height === "number" && (s.width || s.height));
+    if (hasGeometry) return s;
+
+    const startShape = shapeOf(s.start);
+    const endShape = shapeOf(s.end);
+    // A target for each end: the other end's center (or its fixed point).
+    const startTarget = endShape ? center(endShape) : fixedPoint(s.end);
+    const endTarget = startShape ? center(startShape) : fixedPoint(s.start);
+
+    const p1 =
+      fixedPoint(s.start) ?? (startShape && startTarget ? edgePoint(startShape, startTarget) : null);
+    const p2 =
+      fixedPoint(s.end) ?? (endShape && endTarget ? edgePoint(endShape, endTarget) : null);
+    if (!p1 || !p2) return s;
+
+    return { ...s, x: p1.x, y: p1.y, width: p2.x - p1.x, height: p2.y - p1.y };
+  });
 }
 
 function normalize(s: SkeletonElement): SkeletonElement {

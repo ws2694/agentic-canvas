@@ -24,6 +24,24 @@ const Excalidraw = dynamic(
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+// Scroll the viewport so the given elements are centered, keeping zoom.
+// Excalidraw maps scene->screen as screenX = (sceneX + scrollX) * zoom.
+function recenterOn(api: any, els: any[]) {
+  if (!api || !els.length) return;
+  const st = api.getAppState?.();
+  if (!st?.width || !st?.height) return;
+  const zoom = st.zoom?.value ?? 1;
+  const xs = els.map((e) => e.x);
+  const ys = els.map((e) => e.y);
+  const cx = (Math.min(...xs) + Math.max(...els.map((e) => e.x + (e.width ?? 0)))) / 2;
+  const cy = (Math.min(...ys) + Math.max(...els.map((e) => e.y + (e.height ?? 0)))) / 2;
+  const scrollX = st.width / (2 * zoom) - cx;
+  const scrollY = st.height / (2 * zoom) - cy;
+  if (Number.isFinite(scrollX) && Number.isFinite(scrollY)) {
+    api.updateScene({ appState: { scrollX, scrollY } });
+  }
+}
+
 let idCounter = 0;
 const nextId = () => `m${Date.now()}_${idCounter++}`;
 
@@ -52,7 +70,10 @@ export default function CanvasApp() {
         updateScene([...base, ...shown]);
         await sleep(90);
       }
-      api.scrollToContent?.(converted, { fitToContent: true, animate: true, duration: 400 });
+      // Bring the new work into view, keeping the current zoom. We set scroll
+      // ourselves instead of scrollToContent({fitToContent}) — that path can
+      // compute a NaN zoom and blank the canvas.
+      recenterOn(api, converted);
     },
     [updateScene],
   );
@@ -60,6 +81,12 @@ export default function CanvasApp() {
   const appendAssistant = useCallback((mid: string, patch: Partial<ChatMessage>) => {
     setMessages((prev) =>
       prev.map((m) => (m.id === mid ? { ...m, ...patch, text: patch.text ?? m.text } : m)),
+    );
+  }, []);
+
+  const addNote = useCallback((mid: string, note: string) => {
+    setMessages((prev) =>
+      prev.map((m) => (m.id === mid ? { ...m, notes: [...(m.notes ?? []), note] } : m)),
     );
   }, []);
 
@@ -117,10 +144,7 @@ export default function CanvasApp() {
             } else if (event.type === "status") {
               setStatus(event.status);
             } else if (event.type === "draw") {
-              if (event.note) {
-                assistantText += assistantText ? `\n\n✎ ${event.note}` : `✎ ${event.note}`;
-                appendAssistant(assistantId, { text: assistantText });
-              }
+              if (event.note) addNote(assistantId, event.note);
               enqueue(() => handleDraw(event.elements as any[]));
             } else if (event.type === "update") {
               enqueue(async () => {
@@ -147,7 +171,7 @@ export default function CanvasApp() {
         setBusy(false);
       }
     },
-    [appendAssistant, busy, handleDraw, messages, updateScene],
+    [addNote, appendAssistant, busy, handleDraw, messages, updateScene],
   );
 
   return (
