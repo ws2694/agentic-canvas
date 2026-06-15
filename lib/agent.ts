@@ -19,7 +19,30 @@ Connecting shapes:
 - Within one draw call, give shapes short ids and reference them in an arrow's "start" and "end".
 - To wire boxes already on the canvas, reference the ids shown in the canvas state.
 
-Coordinates are canvas pixels. A normal box is about 180x90. A system diagram reads top-down or left-to-right; a plan reads as a column of steps.
+Coordinates are canvas pixels.
+
+VISUAL LANGUAGE — follow these so diagrams come out clean and consistent.
+
+Grid: snap every x, y, width, height to a multiple of 20. Boxes in the same row share a y; boxes in the same column share an x. Alignment is the single biggest thing that makes a diagram look professional.
+
+Shared palette — use the SAME color for the same meaning across every diagram (≤4 fills + gray, and pair color with shape so it survives black-and-white):
+- Blue stroke #1971c2 / fill #a5d8ff = your service / the primary path.
+- Green #2f9e44 / #b2f2bb = datastore, or "done".
+- Orange #e8590c / #ffd8a8 = external / third-party system.
+- Amber #f08c00 / #ffec99 = decision, or a milestone.
+- Red #e03131 / #ffc9c9 = error / risk / blocked.
+- Gray #868e96 / #e9ecef = neutral, planned, or a boundary.
+Default plain shapes to a black stroke and transparent fill; use color only when it carries one of those meanings.
+
+Arrows: solid = synchronous call / direct flow; dashed (strokeStyle "dashed") = asynchronous (event/queue) or a dependency. Put a short label (the arrow's "text") on cross-component and decision arrows; leave plain sequential steps unlabeled.
+
+Pick the layout for the diagram type:
+- System / architecture (boxes = services, arrows = calls): top-to-bottom (clients at top, datastores at bottom); left-to-right if it's a linear pipeline. Box 220x100, 80px gap within a layer, 120px between layers. Blue = yours, orange = external, green = datastore. Group a layer or trust boundary with a frame.
+- Sequence (who calls whom over time): actor headers 150x60 in a row across the top, ~200px apart; time flows down; messages are horizontal labeled arrows ~60px apart; dashed for returns.
+- Flowchart: top-to-bottom. Ellipse 160x60 = start/end; rounded rectangle 200x80 = step; diamond 180x120 = decision. 80px vertical gap; branches offset 220px to the side; label every decision branch (Yes/No); keep the happy path on a straight spine. Green = start/end, blue = step, amber = decision, red = failure.
+- Project plan / roadmap: left-to-right = time. Either columns (260 wide, 240x80 cards) or swimlanes (120 tall with duration bars). Diamond = milestone. Green = done, blue = in progress, gray = planned, red = at risk; dashed arrow = dependency.
+
+Always: one flow direction per diagram, no overlaps (≥80px between unrelated boxes), labels ≤2 lines, and a short title text above the diagram.
 
 Take initiative on the obvious next piece, but follow the human's direction. A small, tidy addition beats a big messy redraw.`;
 
@@ -56,6 +79,11 @@ export const TOOLS: ToolDef[] = [
               },
               strokeColor: { type: "string", description: "Hex color for the outline/text." },
               backgroundColor: { type: "string", description: "Hex fill color, or 'transparent'." },
+              strokeStyle: {
+                type: "string",
+                enum: ["solid", "dashed", "dotted"],
+                description: "Line style. Use 'dashed' for async / dependency arrows.",
+              },
               start: {
                 type: "object",
                 description: "Arrow/line start: { id } to bind to a shape, or { x, y } to pin.",
