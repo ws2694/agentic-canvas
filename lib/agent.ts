@@ -1,35 +1,4 @@
-import type Anthropic from "@anthropic-ai/sdk";
-
-// Model fallback chain. If the primary is rate-limited (429) or overloaded
-// (529) before it starts streaming, the same turn retries on the next tier and
-// stays there for the rest of the session. Per-model `params` differ: Opus and
-// Sonnet take adaptive thinking + effort; Haiku 4.5 supports neither, so it
-// runs plain. Override the chain with AGENT_MODELS (comma-separated ids).
-export type ModelTier = { model: string; label: string; params: Record<string, unknown> };
-
-const THINKING_PARAMS = {
-  thinking: { type: "adaptive" },
-  output_config: { effort: "medium" },
-};
-
-const DEFAULT_MODELS: ModelTier[] = [
-  { model: "claude-opus-4-8", label: "Opus", params: THINKING_PARAMS },
-  { model: "claude-sonnet-4-6", label: "Sonnet", params: THINKING_PARAMS },
-  { model: "claude-haiku-4-5", label: "Haiku", params: {} },
-];
-
-function tierFor(id: string): ModelTier {
-  const known = DEFAULT_MODELS.find((t) => t.model === id);
-  if (known) return known;
-  // Haiku models don't accept thinking/effort; everything else gets them.
-  const params = /haiku/.test(id) ? {} : THINKING_PARAMS;
-  const label = id.replace(/^claude-/, "").replace(/-/g, " ");
-  return { model: id, label, params };
-}
-
-export const MODELS: ModelTier[] = (process.env.AGENT_MODELS
-  ? process.env.AGENT_MODELS.split(",").map((s) => s.trim()).filter(Boolean).map(tierFor)
-  : DEFAULT_MODELS);
+import type { ToolDef } from "@/lib/providers/types";
 
 export const SYSTEM_PROMPT = `You are a thinking partner on a shared visual canvas — like a Google Doc for diagrams. A human is designing a system or plan; you edit the same Excalidraw canvas with them. They drive, you chime in: turn a half-formed idea into clean boxes and arrows, fill in the missing piece, label things, lay out a plan.
 
@@ -54,12 +23,12 @@ Coordinates are canvas pixels. A normal box is about 180x90. A system diagram re
 
 Take initiative on the obvious next piece, but follow the human's direction. A small, tidy addition beats a big messy redraw.`;
 
-export const TOOLS: Anthropic.Tool[] = [
+export const TOOLS: ToolDef[] = [
   {
     name: "draw",
     description:
       "Add new elements to the shared canvas. Pass a coherent batch (e.g. several boxes plus the arrows between them). To connect two shapes you create here, give each an `id` and reference those ids in an arrow's `start`/`end`.",
-    input_schema: {
+    parameters: {
       type: "object",
       properties: {
         note: {
@@ -117,7 +86,7 @@ export const TOOLS: Anthropic.Tool[] = [
     name: "update",
     description:
       "Move, recolor, resize, or relabel elements already on the canvas. Identify each by the id shown in the canvas state.",
-    input_schema: {
+    parameters: {
       type: "object",
       properties: {
         patches: {
@@ -144,7 +113,7 @@ export const TOOLS: Anthropic.Tool[] = [
   {
     name: "delete",
     description: "Remove elements from the canvas by id.",
-    input_schema: {
+    parameters: {
       type: "object",
       properties: {
         ids: { type: "array", items: { type: "string" } },

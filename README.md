@@ -40,25 +40,33 @@ You need an Anthropic API key from https://console.anthropic.com.
 - `@excalidraw/excalidraw` for the canvas
 - `@anthropic-ai/sdk` — `claude-opus-4-8`, adaptive thinking, tool use, streamed over SSE
 
-## Model fallback
+## Provider fallback
 
-If the primary model is rate-limited (429) or overloaded (529) before it starts
-streaming, the same turn retries on the next tier and stays there for the rest of
-the session — so a busy Opus doesn't stall the canvas:
+The agent runs behind a vendor-neutral provider interface ([lib/providers/](lib/providers/)),
+so a turn can be served by any backend. The fallback chain is built from whatever
+keys are configured:
 
 ```
-Opus 4.8  →  Sonnet 4.6  →  Haiku 4.5
+Claude Opus 4.8  →  Claude Sonnet 4.6  →  Claude Haiku 4.5  →  OpenAI gpt-4o
 ```
 
-You'll see a short "Opus is busy — switched to Sonnet" note in the chat when it
-happens. Override the chain with an env var (comma-separated model ids):
+If a backend is rate-limited (429), overloaded (529), down (5xx), or out of
+credits/quota *before it streams any text*, the same turn retries on the next one
+and stays there for the rest of the session. You'll see a short
+"Claude Opus is busy — switched to GPT-4o" note in the chat.
 
-```bash
-AGENT_MODELS=claude-opus-4-8,claude-sonnet-4-6,claude-haiku-4-5
-```
+- A provider is only in the chain if its key is set. With just `ANTHROPIC_API_KEY`
+  you get the Claude tiers; add `OPENAI_API_KEY` to turn on cross-provider
+  fallback. Either key alone works.
+- Override the model lists with env vars (comma-separated ids):
 
-This covers per-model limits and overload. It does **not** cover your whole
-Anthropic account running out of credits — for that you'd add a second provider.
+  ```bash
+  AGENT_MODELS=claude-opus-4-8,claude-sonnet-4-6,claude-haiku-4-5
+  OPENAI_MODELS=gpt-4o
+  ```
+
+Adding another provider is one file: implement the `Provider` interface in
+`lib/providers/` and add it to the chain in `lib/providers/index.ts`.
 
 ## Layout
 

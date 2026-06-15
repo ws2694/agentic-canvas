@@ -1,5 +1,6 @@
-import Anthropic from "@anthropic-ai/sdk";
-import { MODELS, SYSTEM_PROMPT, TOOLS } from "@/lib/agent";
+import { SYSTEM_PROMPT, TOOLS } from "@/lib/agent";
+import { buildProviders, shouldFallback } from "@/lib/providers";
+import type { LlmMessage, Provider, ToolCall, TurnResult } from "@/lib/providers";
 import type { AgentEvent, AgentRequest, SceneItem } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -7,53 +8,36 @@ export const maxDuration = 120;
 
 const MAX_TURNS = 8;
 
-// True for "Claude is limited / unavailable" — the cases where retrying the same
-// model won't help but a different tier might.
-function isLimited(err: unknown): boolean {
-  // 429 rate limit, 529 overloaded, or a transient 5xx — retrying the same
-  // model won't help, but a different tier might.
-  return (
-    err instanceof Anthropic.APIError &&
-    [429, 500, 502, 503, 529].includes((err as { status?: number }).status ?? 0)
-  );
-}
-
-// Run one turn, falling forward through the model chain on a limit/overload.
-// Returns the chosen tier index so the caller can stay there for later turns.
+// Run one turn, falling forward through the provider chain when a backend is
+// limited/unavailable. Returns the chosen provider index so the caller can stay
+// there for later turns.
 async function runTurn(
-  client: Anthropic,
+  providers: Provider[],
   startIdx: number,
-  base: { system: string; tools: Anthropic.Tool[]; messages: Anthropic.MessageParam[] },
-  onText: (t: string) => void,
+  base: { messages: LlmMessage[]; onText: (t: string) => void },
   onFallback: (fromLabel: string, toLabel: string) => void,
-): Promise<{ final: Anthropic.Message; idx: number }> {
+): Promise<{ result: TurnResult; idx: number }> {
   let lastErr: unknown;
-  for (let i = startIdx; i < MODELS.length; i++) {
-    const tier = MODELS[i];
+  for (let i = startIdx; i < providers.length; i++) {
+    const provider = providers[i];
     let produced = false;
     try {
-      const ms = client.messages.stream({
-        model: tier.model,
-        max_tokens: 16000,
-        system: base.system,
-        tools: base.tools,
+      const result = await provider.streamTurn({
+        system: SYSTEM_PROMPT,
+        tools: TOOLS,
         messages: base.messages,
-        ...tier.params,
-      } as any);
-      ms.on("text", (delta) => {
-        if (delta) {
+        onText: (delta) => {
           produced = true;
-          onText(delta);
-        }
+          base.onText(delta);
+        },
       });
-      const final = await ms.finalMessage();
-      return { final, idx: i };
+      return { result, idx: i };
     } catch (err) {
       lastErr = err;
       // Only fall back before any text streamed (avoids duplicated output) and
-      // only for limit/overload errors with a tier left to try.
-      if (!produced && isLimited(err) && i + 1 < MODELS.length) {
-        onFallback(tier.label, MODELS[i + 1].label);
+      // only when the backend looks unavailable, not on a genuine request bug.
+      if (!produced && shouldFallback(err) && i + 1 < providers.length) {
+        onFallback(provider.label, providers[i + 1].label);
         continue;
       }
       throw err;
@@ -92,12 +76,12 @@ function sceneToText(scene: SceneItem[]): string {
 }
 
 export async function POST(req: Request) {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
-    return new Response(JSON.stringify({ error: "ANTHROPIC_API_KEY is not set." }), {
-      status: 500,
-      headers: { "content-type": "application/json" },
-    });
+  const providers = buildProviders();
+  if (!providers.length) {
+    return new Response(
+      JSON.stringify({ error: "No model provider configured. Set ANTHROPIC_API_KEY and/or OPENAI_API_KEY." }),
+      { status: 500, headers: { "content-type": "application/json" } },
+    );
   }
 
   let body: AgentRequest;
@@ -107,20 +91,20 @@ export async function POST(req: Request) {
     return new Response(JSON.stringify({ error: "Invalid JSON body." }), { status: 400 });
   }
 
-  const client = new Anthropic({ apiKey });
   const encoder = new TextEncoder();
 
-  const history: Anthropic.MessageParam[] = (body.history ?? [])
+  // Normalized conversation: prior text turns + the new turn with scene context.
+  const messages: LlmMessage[] = (body.history ?? [])
     .filter((t) => t.text?.trim())
-    .map((t) => ({ role: t.role, content: t.text }));
-
-  const messages: Anthropic.MessageParam[] = [
-    ...history,
-    {
-      role: "user",
-      content: `${sceneToText(body.scene ?? [])}\n\n---\n${body.message}`,
-    },
-  ];
+    .map((t) =>
+      t.role === "assistant"
+        ? { role: "assistant", content: t.text, toolCalls: [] }
+        : { role: "user", content: t.text },
+    );
+  messages.push({
+    role: "user",
+    content: `${sceneToText(body.scene ?? [])}\n\n---\n${body.message}`,
+  });
 
   const stream = new ReadableStream({
     async start(controller) {
@@ -128,58 +112,30 @@ export async function POST(req: Request) {
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
       };
 
-      // Stays on the highest available tier once a fallback happens.
+      // Stays on the highest available provider once a fallback happens.
       let activeIdx = 0;
       try {
         for (let turn = 0; turn < MAX_TURNS; turn++) {
           send({ type: "status", status: "thinking" });
 
-          const { final, idx } = await runTurn(
-            client,
+          const { result, idx } = await runTurn(
+            providers,
             activeIdx,
-            { system: SYSTEM_PROMPT, tools: TOOLS, messages },
-            (t) => send({ type: "text", text: t }),
+            { messages, onText: (t) => send({ type: "text", text: t }) },
             (fromLabel, toLabel) =>
               send({ type: "notice", message: `${fromLabel} is busy — switched to ${toLabel}.` }),
           );
           activeIdx = idx;
-          messages.push({ role: "assistant", content: final.content });
+          messages.push({ role: "assistant", content: result.text, toolCalls: result.toolCalls });
 
-          const toolUses = final.content.filter(
-            (b): b is Anthropic.ToolUseBlock => b.type === "tool_use",
-          );
-
-          if (final.stop_reason !== "tool_use" || toolUses.length === 0) {
-            break;
-          }
+          if (!result.toolCalls.length) break;
 
           send({ type: "status", status: "drawing" });
 
-          const toolResults: Anthropic.ToolResultBlockParam[] = [];
-          for (const use of toolUses) {
-            const input = (use.input ?? {}) as Record<string, unknown>;
-            if (use.name === "draw") {
-              send({
-                type: "draw",
-                elements: Array.isArray(input.elements) ? (input.elements as any) : [],
-                note: typeof input.note === "string" ? input.note : undefined,
-              });
-            } else if (use.name === "update") {
-              send({
-                type: "update",
-                patches: Array.isArray(input.patches) ? (input.patches as any) : [],
-              });
-            } else if (use.name === "delete") {
-              send({ type: "delete", ids: Array.isArray(input.ids) ? (input.ids as any) : [] });
-            }
-            toolResults.push({
-              type: "tool_result",
-              tool_use_id: use.id,
-              content: "Applied to the canvas.",
-            });
+          for (const call of result.toolCalls) {
+            dispatchToolCall(call, send);
+            messages.push({ role: "tool", toolCallId: call.id, content: "Applied to the canvas." });
           }
-
-          messages.push({ role: "user", content: toolResults });
         }
 
         send({ type: "status", status: "idle" });
@@ -200,4 +156,19 @@ export async function POST(req: Request) {
       connection: "keep-alive",
     },
   });
+}
+
+function dispatchToolCall(call: ToolCall, send: (e: AgentEvent) => void) {
+  const input = call.input ?? {};
+  if (call.name === "draw") {
+    send({
+      type: "draw",
+      elements: Array.isArray(input.elements) ? (input.elements as any) : [],
+      note: typeof input.note === "string" ? input.note : undefined,
+    });
+  } else if (call.name === "update") {
+    send({ type: "update", patches: Array.isArray(input.patches) ? (input.patches as any) : [] });
+  } else if (call.name === "delete") {
+    send({ type: "delete", ids: Array.isArray(input.ids) ? (input.ids as any) : [] });
+  }
 }
