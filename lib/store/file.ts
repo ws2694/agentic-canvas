@@ -3,9 +3,11 @@ import path from "path";
 import { newId, type CanvasDoc, type DocPatch, type DocSummary, type Store } from "./types";
 
 // Local dev store: one JSON file per doc under .data/docs/. Zero setup, persists
-// across restarts. Not for Vercel (its filesystem is ephemeral) — use Postgres
-// there by setting DATABASE_URL.
-const DIR = path.join(process.cwd(), ".data", "docs");
+// across restarts. On Vercel the project filesystem is read-only, so fall back
+// to /tmp just so a no-database preview boots — it's per-instance and ephemeral,
+// so set DATABASE_URL for any real deploy (see lib/store/index.ts).
+const ROOT = process.env.VERCEL ? "/tmp/agentic-canvas" : process.cwd();
+const DIR = path.join(ROOT, ".data", "docs");
 
 async function ensureDir() {
   await fs.mkdir(DIR, { recursive: true });
