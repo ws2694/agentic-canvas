@@ -24,21 +24,53 @@ const Excalidraw = dynamic(
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-// Scroll the viewport so the given elements are centered, keeping zoom.
 // Excalidraw maps scene->screen as screenX = (sceneX + scrollX) * zoom.
-function recenterOn(api: any, els: any[]) {
-  if (!api || !els.length) return;
+function boundsOf(els: any[]) {
+  return {
+    minX: Math.min(...els.map((e) => e.x)),
+    minY: Math.min(...els.map((e) => e.y)),
+    maxX: Math.max(...els.map((e) => e.x + (e.width ?? 0))),
+    maxY: Math.max(...els.map((e) => e.y + (e.height ?? 0))),
+  };
+}
+
+// After the agent draws, keep the whole diagram in view — but only move the
+// viewport when the new work isn't already visible, so we don't fight a human
+// who zoomed in to focus somewhere. When we do move, fit everything (capped at
+// 100% so we never zoom past real size) so nothing falls off-screen.
+function keepInView(api: any, justAdded: any[]) {
+  if (!api || !justAdded.length) return;
   const st = api.getAppState?.();
   if (!st?.width || !st?.height) return;
+
   const zoom = st.zoom?.value ?? 1;
-  const xs = els.map((e) => e.x);
-  const ys = els.map((e) => e.y);
-  const cx = (Math.min(...xs) + Math.max(...els.map((e) => e.x + (e.width ?? 0)))) / 2;
-  const cy = (Math.min(...ys) + Math.max(...els.map((e) => e.y + (e.height ?? 0)))) / 2;
-  const scrollX = st.width / (2 * zoom) - cx;
-  const scrollY = st.height / (2 * zoom) - cy;
+  const vp = {
+    minX: -st.scrollX,
+    minY: -st.scrollY,
+    maxX: -st.scrollX + st.width / zoom,
+    maxY: -st.scrollY + st.height / zoom,
+  };
+  const nb = boundsOf(justAdded);
+  const m = 24;
+  const alreadyVisible =
+    nb.minX >= vp.minX + m && nb.minY >= vp.minY + m && nb.maxX <= vp.maxX - m && nb.maxY <= vp.maxY - m;
+  if (alreadyVisible) return;
+
+  const all = (api.getSceneElements() as any[]).filter((e) => !e.isDeleted);
+  if (!all.length) return;
+  const b = boundsOf(all);
+  const cw = Math.max(b.maxX - b.minX, 1);
+  const ch = Math.max(b.maxY - b.minY, 1);
+  const pad = 100;
+  let z = Math.min((st.width - pad) / cw, (st.height - pad) / ch, 1);
+  if (!Number.isFinite(z) || z <= 0) z = 1;
+  z = Math.max(z, 0.1);
+  const cx = (b.minX + b.maxX) / 2;
+  const cy = (b.minY + b.maxY) / 2;
+  const scrollX = st.width / (2 * z) - cx;
+  const scrollY = st.height / (2 * z) - cy;
   if (Number.isFinite(scrollX) && Number.isFinite(scrollY)) {
-    api.updateScene({ appState: { scrollX, scrollY } });
+    api.updateScene({ appState: { scrollX, scrollY, zoom: { value: z } } });
   }
 }
 
@@ -70,10 +102,8 @@ export default function CanvasApp() {
         updateScene([...base, ...shown]);
         await sleep(90);
       }
-      // Bring the new work into view, keeping the current zoom. We set scroll
-      // ourselves instead of scrollToContent({fitToContent}) — that path can
-      // compute a NaN zoom and blank the canvas.
-      recenterOn(api, converted);
+      // Keep the new work (and the rest of the diagram) in view.
+      keepInView(api, converted);
     },
     [updateScene],
   );
