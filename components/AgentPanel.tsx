@@ -58,6 +58,7 @@ export function AgentPanel({
   const [draft, setDraft] = useState("");
   const [image, setImage] = useState<PendingImage | null>(null);
   const [repoRoot, setRepoRoot] = useState<string | null>(null);
+  const [folderDraft, setFolderDraft] = useState<string | null>(null); // null = editor closed
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -98,9 +99,10 @@ export function AgentPanel({
     }
   };
 
-  const pickFolder = () => {
-    const p = window.prompt("Local folder path to diagram:", repoRoot ?? "");
-    if (p !== null) setRepoRoot(p.trim() || null);
+  const toggleFolder = () => setFolderDraft((d) => (d === null ? repoRoot ?? "" : null));
+  const confirmFolder = () => {
+    setRepoRoot(folderDraft && folderDraft.trim() ? folderDraft.trim() : null);
+    setFolderDraft(null);
   };
 
   const statusLabel =
@@ -173,7 +175,38 @@ export function AgentPanel({
       </div>
 
       <div className="border-t border-line p-3">
-        {(image || repoRoot) && (
+        {folderDraft !== null && (
+          <div className="mb-2 flex items-center gap-2 rounded-lg border border-amber-300 bg-white px-2.5 py-2 ring-2 ring-amber-100">
+            <Folder className="h-4 w-4 shrink-0 text-amber-500" />
+            <input
+              autoFocus
+              value={folderDraft}
+              onChange={(e) => setFolderDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  confirmFolder();
+                } else if (e.key === "Escape") {
+                  e.preventDefault();
+                  setFolderDraft(null);
+                }
+              }}
+              placeholder="/path/to/your/project"
+              className="min-w-0 flex-1 bg-transparent font-mono text-xs text-ink outline-none placeholder:font-sans placeholder:text-neutral-400"
+            />
+            <button
+              onClick={confirmFolder}
+              className="shrink-0 rounded-md bg-amber-500 px-2.5 py-1 text-xs font-medium text-white transition hover:bg-amber-600"
+            >
+              Set
+            </button>
+            <button onClick={() => setFolderDraft(null)} aria-label="Cancel" className="shrink-0 text-neutral-400 transition hover:text-ink">
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        )}
+
+        {(image || (repoRoot && folderDraft === null)) && (
           <div className="mb-2 flex flex-wrap gap-1.5">
             {image && (
               <span className="flex items-center gap-2 rounded-lg border border-line bg-white py-1 pl-1 pr-2 text-xs text-neutral-600">
@@ -185,14 +218,26 @@ export function AgentPanel({
                 </button>
               </span>
             )}
-            {repoRoot && (
-              <span className="flex max-w-full items-center gap-1.5 rounded-lg border border-line bg-white py-1.5 pl-2 pr-1.5 text-xs text-neutral-600">
+            {repoRoot && folderDraft === null && (
+              <button
+                onClick={toggleFolder}
+                title="Edit folder"
+                className="flex max-w-full items-center gap-1.5 rounded-lg border border-line bg-white py-1.5 pl-2 pr-1.5 text-xs text-neutral-600 transition hover:border-amber-300"
+              >
                 <Folder className="h-3.5 w-3.5 shrink-0 text-neutral-400" />
                 <span className="truncate font-mono text-[11px]" title={repoRoot}>{repoRoot}</span>
-                <button onClick={() => setRepoRoot(null)} aria-label="Remove folder" className="shrink-0 text-neutral-400 transition hover:text-ink">
+                <span
+                  role="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setRepoRoot(null);
+                  }}
+                  aria-label="Remove folder"
+                  className="shrink-0 text-neutral-400 transition hover:text-ink"
+                >
                   <X className="h-3.5 w-3.5" />
-                </button>
-              </span>
+                </span>
+              </button>
             )}
           </div>
         )}
@@ -232,10 +277,10 @@ export function AgentPanel({
               <ImageIcon className="h-[18px] w-[18px]" />
             </button>
             <button
-              onClick={pickFolder}
+              onClick={toggleFolder}
               title="Diagram a local code folder"
               aria-label="Diagram a local code folder"
-              className={`rounded-lg p-1.5 transition hover:bg-neutral-100 hover:text-ink ${repoRoot ? "text-amber-600" : "text-neutral-400"}`}
+              className={`rounded-lg p-1.5 transition hover:bg-neutral-100 hover:text-ink ${repoRoot || folderDraft !== null ? "text-amber-600" : "text-neutral-400"}`}
             >
               <Folder className="h-[18px] w-[18px]" />
             </button>
