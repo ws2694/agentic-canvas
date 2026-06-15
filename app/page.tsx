@@ -1,5 +1,7 @@
-import CanvasApp from "@/components/CanvasApp";
+import { HomeClient } from "@/components/HomeClient";
 
-export default function Page() {
-  return <CanvasApp />;
+export const dynamic = "force-dynamic";
+
+export default function Home() {
+  return <HomeClient />;
 }

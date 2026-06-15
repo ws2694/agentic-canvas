@@ -2,8 +2,7 @@
 // touches `window` during the server build.
 
 import type { ElementPatch, SceneItem, SkeletonElement } from "@/lib/types";
-
-type AnyElement = Record<string, any>;
+import { center, edgePoint, withArrowGeometry, type AnyElement } from "@/lib/geometry";
 
 // Turn the agent's loose skeletons into real Excalidraw elements. Arrows resolve
 // their endpoints against both this batch and whatever is already on the canvas
@@ -45,71 +44,6 @@ export async function convertSkeletons(
   }
 }
 
-type Pt = { x: number; y: number };
-
-function center(s: AnyElement): Pt {
-  return { x: s.x + (s.width ?? 100) / 2, y: s.y + (s.height ?? 60) / 2 };
-}
-
-// Point on a shape's boundary along the ray from its center toward `toward`,
-// pushed out by a small gap so the arrowhead doesn't touch the box.
-function edgePoint(s: AnyElement, toward: Pt, gap = 6): Pt {
-  const c = center(s);
-  const dx = toward.x - c.x;
-  const dy = toward.y - c.y;
-  if (dx === 0 && dy === 0) return c;
-  const hw = (s.width ?? 100) / 2;
-  const hh = (s.height ?? 60) / 2;
-  const tx = dx !== 0 ? hw / Math.abs(dx) : Infinity;
-  const ty = dy !== 0 ? hh / Math.abs(dy) : Infinity;
-  const t = Math.min(tx, ty);
-  const len = Math.hypot(dx, dy);
-  const g = len ? gap / len : 0;
-  return { x: c.x + dx * (t + g), y: c.y + dy * (t + g) };
-}
-
-// An arrow that carries only `start`/`end` references has no geometry, so
-// Excalidraw renders it zero-length (invisible) — and `start.id`/`end.id` only
-// bind to shapes inside the same convert batch, never to existing canvas shapes.
-// So we resolve endpoints ourselves (edge-to-edge between the linked shapes) and
-// drop the binding refs, emitting a plain arrow with explicit geometry that
-// always renders, whether the boxes were drawn this turn or earlier.
-function withArrowGeometry(
-  skeletons: SkeletonElement[],
-  shapes: Map<string, AnyElement>,
-): SkeletonElement[] {
-  const fixedPoint = (ref?: { id?: string; x?: number; y?: number }): Pt | null =>
-    ref && typeof ref.x === "number" && typeof ref.y === "number" ? { x: ref.x, y: ref.y } : null;
-  const shapeOf = (ref?: { id?: string }) =>
-    ref?.id && shapes.has(ref.id) ? shapes.get(ref.id)! : null;
-
-  return skeletons.map((s) => {
-    if (s.type !== "arrow" && s.type !== "line") return s;
-
-    const startShape = shapeOf(s.start);
-    const endShape = shapeOf(s.end);
-    const startTarget = endShape ? center(endShape) : fixedPoint(s.end);
-    const endTarget = startShape ? center(startShape) : fixedPoint(s.start);
-
-    const p1 =
-      fixedPoint(s.start) ?? (startShape && startTarget ? edgePoint(startShape, startTarget) : null);
-    const p2 =
-      fixedPoint(s.end) ?? (endShape && endTarget ? edgePoint(endShape, endTarget) : null);
-
-    // Strip the binding refs either way — they can't bind across batches.
-    const { start, end, ...rest } = s;
-    const hasGeometry =
-      Array.isArray((rest as AnyElement).points) ||
-      (typeof rest.width === "number" && typeof rest.height === "number" && (rest.width || rest.height));
-
-    if (p1 && p2) {
-      return { ...rest, x: p1.x, y: p1.y, width: p2.x - p1.x, height: p2.y - p1.y };
-    }
-    // Couldn't resolve endpoints — keep whatever geometry the agent gave.
-    return hasGeometry ? (rest as SkeletonElement) : s;
-  });
-}
-
 function normalize(s: SkeletonElement): SkeletonElement {
   const out: SkeletonElement = { ...s };
   // Excalidraw treats text as a label on shapes via `label`, but a bare `text`
@@ -127,6 +61,58 @@ function normalize(s: SkeletonElement): SkeletonElement {
 export function revealOrder(elements: AnyElement[]): AnyElement[] {
   const weight = (t: string) => (t === "arrow" || t === "line" ? 1 : 0);
   return [...elements].sort((a, b) => weight(a.type) - weight(b.type));
+}
+
+// Arrows carry customData.{from,to} (the ids of the shapes they link). When a
+// box moves, recompute the connected arrows' endpoints (edge-to-edge) and push
+// the update. Returns true if anything moved. Stable across repeat calls — if
+// nothing moved, the recomputed endpoints match and we don't update, so this is
+// safe to call on every Excalidraw onChange.
+export function rerouteArrows(api: any): boolean {
+  const els = api.getSceneElements() as AnyElement[];
+  const byId = new Map(els.map((e) => [e.id, e]));
+  let changed = false;
+
+  const next = els.map((el) => {
+    if (el.type !== "arrow" && el.type !== "line") return el;
+    const link = el.customData as { from?: string; to?: string } | undefined;
+    if (!link?.from || !link?.to) return el;
+    const from = byId.get(link.from);
+    const to = byId.get(link.to);
+    if (!from || !to || from.isDeleted || to.isDeleted) return el;
+
+    const p1 = edgePoint(from, center(to));
+    const p2 = edgePoint(to, center(from));
+    const dx = p2.x - p1.x;
+    const dy = p2.y - p1.y;
+
+    const pts = el.points as [number, number][] | undefined;
+    const lastX = el.x + (pts?.[pts.length - 1]?.[0] ?? el.width ?? 0);
+    const lastY = el.y + (pts?.[pts.length - 1]?.[1] ?? el.height ?? 0);
+    const moved =
+      Math.abs(el.x - p1.x) > 0.5 ||
+      Math.abs(el.y - p1.y) > 0.5 ||
+      Math.abs(lastX - p2.x) > 0.5 ||
+      Math.abs(lastY - p2.y) > 0.5;
+    if (!moved) return el;
+
+    changed = true;
+    return {
+      ...el,
+      x: p1.x,
+      y: p1.y,
+      width: Math.abs(dx),
+      height: Math.abs(dy),
+      points: [
+        [0, 0],
+        [dx, dy],
+      ],
+      version: (el.version ?? 1) + 1,
+    };
+  });
+
+  if (changed) api.updateScene({ elements: next });
+  return changed;
 }
 
 export function applyPatches(elements: readonly AnyElement[], patches: ElementPatch[]): AnyElement[] {
@@ -169,7 +155,9 @@ export function summarizeScene(elements: readonly AnyElement[]): SceneItem[] {
     if (el.type === "text" && el.containerId) textById.set(el.containerId, el.text ?? "");
   }
   return elements
-    .filter((el) => !el.isDeleted && el.type !== "text" || (el.type === "text" && !el.containerId))
+    .filter((el) => el.id && !el.isDeleted)
+    // Drop text that's bound to a shape — its label is folded into the shape.
+    .filter((el) => el.type !== "text" || !el.containerId)
     .map((el) => ({
       id: el.id,
       type: el.type,

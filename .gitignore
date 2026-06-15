@@ -8,3 +8,6 @@ build
 *.tsbuildinfo
 next-env.d.ts
 .gstack/
+
+# local file store
+.data/

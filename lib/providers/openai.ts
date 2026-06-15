@@ -6,7 +6,7 @@ function labelFor(id: string): string {
   return id.startsWith("gpt-") ? "GPT-" + id.slice(4) : id.toUpperCase();
 }
 
-function toOpenAIMessages(system: string, messages: LlmMessage[]): any[] {
+export function toOpenAIMessages(system: string, messages: LlmMessage[]): any[] {
   const out: any[] = [{ role: "system", content: system }];
   for (const m of messages) {
     if (m.role === "user") {

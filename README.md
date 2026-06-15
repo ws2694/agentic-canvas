@@ -68,25 +68,60 @@ and stays there for the rest of the session. You'll see a short
 Adding another provider is one file: implement the `Provider` interface in
 `lib/providers/` and add it to the chain in `lib/providers/index.ts`.
 
+## Persistence
+
+Canvases are saved automatically. Each lives at `/c/[id]`; the home page lists
+them. The Excalidraw scene + chat history autosave (debounced) and reload on
+open.
+
+Storage is one env var:
+
+- **Local (default):** JSON files under `.data/docs/`. Zero setup — just `npm run dev`.
+- **Production (Vercel):** set `DATABASE_URL` to a Postgres connection string
+  (e.g. Neon / Vercel Postgres). The `documents` table is created on first use.
+
+Vercel's filesystem is ephemeral, so a deploy **must** set `DATABASE_URL` — the
+JSON-file store won't persist there.
+
+## Develop
+
+```bash
+npm run dev         # http://localhost:3000
+npm run typecheck   # tsc --noEmit
+npm test            # vitest — geometry, scene summary, provider conversion, arrow re-routing
+npm run build
+```
+
+CI (`.github/workflows/ci.yml`) runs typecheck + test + build on every PR.
+
 ## Layout
 
 ```
 app/
-  api/agent/route.ts   # streaming agent loop (SSE): text + draw/update/delete tool calls
-  page.tsx             # mounts the canvas app
+  page.tsx             # home: list of canvases
+  c/[id]/page.tsx      # the canvas editor (loads the saved doc)
+  api/agent/route.ts   # streaming agent loop (SSE), provider-agnostic
+  api/docs/...         # CRUD for saved canvases
 components/
-  CanvasApp.tsx        # Excalidraw + applies streamed edits to the live scene
+  CanvasApp.tsx        # Excalidraw + applies streamed edits + autosave
   AgentPanel.tsx       # the chat side panel
+  HomeClient.tsx       # the canvas list
 lib/
-  agent.ts             # model, system prompt, tool schemas
+  agent.ts             # system prompt, tool schemas
+  geometry.ts          # pure: arrow endpoints / re-routing math (unit-tested)
   elements.ts          # skeleton -> Excalidraw conversion, patch/delete, scene summary
+  scene.ts             # pure: agent-facing scene summary (unit-tested)
+  providers/           # vendor-neutral LLM provider interface + Claude/OpenAI adapters
+  store/               # Store interface + file (local) and Postgres adapters
   types.ts             # shared types
+tests/                 # vitest unit tests
 ```
 
 ## Notes
 
 - Within a single `draw` call the agent connects shapes by giving them ids and
   referencing those ids in an arrow's `start`/`end`. Across turns it edits
-  existing shapes by the id shown in the canvas summary.
-- This is a single-user MVP. Real-time multiplayer (multiple humans + agents on
+  existing shapes by the id shown in the canvas summary. Arrows record the shapes
+  they link and re-route automatically when a box moves.
+- This is a single-user app. Real-time multiplayer (multiple humans + agents on
   one canvas) would layer a sync backend under the same model.

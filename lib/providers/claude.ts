@@ -15,7 +15,7 @@ function labelFor(id: string): string {
 
 // Anthropic needs all tool results for one assistant turn grouped into a single
 // user message; our normalized history emits one per call, so we collapse them.
-function toAnthropicMessages(messages: LlmMessage[]): Anthropic.MessageParam[] {
+export function toAnthropicMessages(messages: LlmMessage[]): Anthropic.MessageParam[] {
   const out: Anthropic.MessageParam[] = [];
   for (const m of messages) {
     if (m.role === "user") {

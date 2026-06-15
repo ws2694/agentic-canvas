@@ -1,13 +1,15 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useCallback, useRef, useState } from "react";
+import Link from "next/link";
+import { useCallback, useEffect, useRef, useState } from "react";
 // Excalidraw 0.17 injects its own styles at runtime — no CSS import needed.
 
 import {
   applyDelete,
   applyPatches,
   convertSkeletons,
+  rerouteArrows,
   revealOrder,
   summarizeScene,
 } from "@/lib/elements";
@@ -34,30 +36,12 @@ function boundsOf(els: any[]) {
   };
 }
 
-// After the agent draws, keep the whole diagram in view — but only move the
-// viewport when the new work isn't already visible, so we don't fight a human
-// who zoomed in to focus somewhere. When we do move, fit everything (capped at
-// 100% so we never zoom past real size) so nothing falls off-screen.
-function keepInView(api: any, justAdded: any[]) {
-  if (!api || !justAdded.length) return;
-  const st = api.getAppState?.();
-  if (!st?.width || !st?.height) return;
-
-  const zoom = st.zoom?.value ?? 1;
-  const vp = {
-    minX: -st.scrollX,
-    minY: -st.scrollY,
-    maxX: -st.scrollX + st.width / zoom,
-    maxY: -st.scrollY + st.height / zoom,
-  };
-  const nb = boundsOf(justAdded);
-  const m = 24;
-  const alreadyVisible =
-    nb.minX >= vp.minX + m && nb.minY >= vp.minY + m && nb.maxX <= vp.maxX - m && nb.maxY <= vp.maxY - m;
-  if (alreadyVisible) return;
-
+// Fit the whole diagram in view, capped at 100% so we never zoom past real size.
+function fitToContent(api: any) {
   const all = (api.getSceneElements() as any[]).filter((e) => !e.isDeleted);
   if (!all.length) return;
+  const st = api.getAppState?.();
+  if (!st?.width || !st?.height) return;
   const b = boundsOf(all);
   const cw = Math.max(b.maxX - b.minX, 1);
   const ch = Math.max(b.maxY - b.minY, 1);
@@ -74,18 +58,91 @@ function keepInView(api: any, justAdded: any[]) {
   }
 }
 
+// After the agent draws, keep the new work in view — but only move the viewport
+// when it isn't already visible, so we don't fight a human who zoomed in.
+function keepInView(api: any, justAdded: any[]) {
+  if (!api || !justAdded.length) return;
+  const st = api.getAppState?.();
+  if (!st?.width || !st?.height) return;
+  const zoom = st.zoom?.value ?? 1;
+  const vp = {
+    minX: -st.scrollX,
+    minY: -st.scrollY,
+    maxX: -st.scrollX + st.width / zoom,
+    maxY: -st.scrollY + st.height / zoom,
+  };
+  const nb = boundsOf(justAdded);
+  const m = 24;
+  const visible =
+    nb.minX >= vp.minX + m && nb.minY >= vp.minY + m && nb.maxX <= vp.maxX - m && nb.maxY <= vp.maxY - m;
+  if (visible) return;
+  fitToContent(api);
+}
+
 let idCounter = 0;
 const nextId = () => `m${Date.now()}_${idCounter++}`;
 
-export default function CanvasApp() {
+export type CanvasAppProps = {
+  docId: string;
+  initialTitle: string;
+  initialScene: any[];
+  initialChat: ChatMessage[];
+};
+
+export default function CanvasApp({ docId, initialTitle, initialScene, initialChat }: CanvasAppProps) {
   const apiRef = useRef<any>(null);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const fittedRef = useRef(false);
+  const [messages, setMessages] = useState<ChatMessage[]>(initialChat);
+  const [title, setTitle] = useState(initialTitle);
   const [status, setStatus] = useState<"idle" | "thinking" | "drawing">("idle");
   const [busy, setBusy] = useState(false);
+  const [saveState, setSaveState] = useState<"saved" | "saving">("saved");
+
+  // Latest values for the debounced save closure.
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
+  const titleRef = useRef(title);
+  titleRef.current = title;
 
   const updateScene = useCallback((elements: any[]) => {
     apiRef.current?.updateScene({ elements });
   }, []);
+
+  // ---- autosave ----
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const doSave = useCallback(async () => {
+    const api = apiRef.current;
+    if (!api) return;
+    const scene = (api.getSceneElements() as any[]).filter((e) => !e.isDeleted);
+    try {
+      await fetch(`/api/docs/${docId}`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ title: titleRef.current, scene, chat: messagesRef.current }),
+      });
+    } finally {
+      setSaveState("saved");
+    }
+  }, [docId]);
+
+  const scheduleSave = useCallback(() => {
+    setSaveState("saving");
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(doSave, 800);
+  }, [doSave]);
+
+  // Save when chat or title changes (canvas changes go through onChange below).
+  useEffect(() => {
+    scheduleSave();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages, title]);
+
+  // Excalidraw fires onChange constantly; reroute connected arrows, then save.
+  const handleChange = useCallback(() => {
+    const api = apiRef.current;
+    if (api) rerouteArrows(api);
+    scheduleSave();
+  }, [scheduleSave]);
 
   const handleDraw = useCallback(
     async (skeletons: any[]) => {
@@ -95,14 +152,12 @@ export default function CanvasApp() {
       const converted = await convertSkeletons(skeletons, base);
       if (!converted.length) return;
       const reveal = revealOrder(converted);
-      // Reveal one at a time so it feels like a collaborator drawing.
       const shown: any[] = [];
       for (const el of reveal) {
         shown.push(el);
         updateScene([...base, ...shown]);
         await sleep(90);
       }
-      // Keep the new work (and the rest of the diagram) in view.
       keepInView(api, converted);
     },
     [updateScene],
@@ -151,7 +206,6 @@ export default function CanvasApp() {
         const decoder = new TextDecoder();
         let buffer = "";
 
-        // Keep canvas mutations in order even though events arrive fast.
         let queue: Promise<void> = Promise.resolve();
         const enqueue = (fn: () => Promise<void>) => {
           queue = queue.then(fn).catch(() => {});
@@ -207,14 +261,40 @@ export default function CanvasApp() {
   );
 
   return (
-    <div className="flex h-dvh w-screen overflow-hidden bg-paper">
-      <div className="relative h-full flex-1">
-        <Excalidraw
-          excalidrawAPI={(api: any) => (apiRef.current = api)}
-          initialData={{ appState: { viewBackgroundColor: "#f6f4ef" } }}
+    <div className="flex h-dvh w-screen flex-col overflow-hidden bg-paper">
+      <header className="flex h-11 shrink-0 items-center gap-3 border-b border-line bg-white/80 px-3 backdrop-blur">
+        <Link href="/" className="rounded-md px-2 py-1 text-sm text-neutral-500 transition hover:bg-neutral-100 hover:text-ink">
+          ← Canvases
+        </Link>
+        <input
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          placeholder="Untitled canvas"
+          className="min-w-0 flex-1 bg-transparent text-sm font-medium text-ink outline-none placeholder:text-neutral-400"
         />
+        <span className="text-xs text-neutral-400">{saveState === "saving" ? "Saving…" : "Saved"}</span>
+      </header>
+
+      <div className="flex flex-1 overflow-hidden">
+        <div className="relative h-full flex-1">
+          <Excalidraw
+            excalidrawAPI={(api: any) => {
+              apiRef.current = api;
+              if (!fittedRef.current && initialScene.length) {
+                fittedRef.current = true;
+                setTimeout(() => fitToContent(api), 60);
+              }
+            }}
+            onChange={handleChange}
+            initialData={{
+              elements: initialScene as any,
+              appState: { viewBackgroundColor: "#f6f4ef" },
+              scrollToContent: true,
+            }}
+          />
+        </div>
+        <AgentPanel messages={messages} status={status} busy={busy} onSend={send} />
       </div>
-      <AgentPanel messages={messages} status={status} busy={busy} onSend={send} />
     </div>
   );
 }
