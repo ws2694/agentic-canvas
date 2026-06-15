@@ -1,0 +1,21 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  overscroll-behavior: none;
+}
+
+body {
+  background: #f6f4ef;
+  color: #1c1b1a;
+}
+
+/* Let Excalidraw own its own surface inside our flex layout. */
+.excalidraw {
+  --color-primary: #1c1b1a;
+}
