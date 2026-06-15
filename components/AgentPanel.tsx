@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { ArrowUp, Folder, Image as ImageIcon, X } from "lucide-react";
 import type { ImageInput } from "@/lib/types";
 
 export type ChatMessage = {
@@ -173,54 +174,30 @@ export function AgentPanel({
 
       <div className="border-t border-line p-3">
         {(image || repoRoot) && (
-          <div className="mb-2 flex flex-wrap gap-2">
+          <div className="mb-2 flex flex-wrap gap-1.5">
             {image && (
               <span className="flex items-center gap-2 rounded-lg border border-line bg-white py-1 pl-1 pr-2 text-xs text-neutral-600">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={image.preview} alt="" className="h-7 w-7 rounded object-cover" />
-                picture
-                <button onClick={() => setImage(null)} className="text-neutral-400 hover:text-red-600">
-                  ✕
+                <img src={image.preview} alt="" className="h-8 w-8 rounded-md object-cover" />
+                <span>Picture</span>
+                <button onClick={() => setImage(null)} aria-label="Remove picture" className="text-neutral-400 transition hover:text-ink">
+                  <X className="h-3.5 w-3.5" />
                 </button>
               </span>
             )}
             {repoRoot && (
-              <span className="flex max-w-full items-center gap-1.5 rounded-lg border border-line bg-white px-2 py-1 text-xs text-neutral-600">
-                <span aria-hidden>📁</span>
-                <span className="truncate" title={repoRoot}>{repoRoot}</span>
-                <button onClick={() => setRepoRoot(null)} className="shrink-0 text-neutral-400 hover:text-red-600">
-                  ✕
+              <span className="flex max-w-full items-center gap-1.5 rounded-lg border border-line bg-white py-1.5 pl-2 pr-1.5 text-xs text-neutral-600">
+                <Folder className="h-3.5 w-3.5 shrink-0 text-neutral-400" />
+                <span className="truncate font-mono text-[11px]" title={repoRoot}>{repoRoot}</span>
+                <button onClick={() => setRepoRoot(null)} aria-label="Remove folder" className="shrink-0 text-neutral-400 transition hover:text-ink">
+                  <X className="h-3.5 w-3.5" />
                 </button>
               </span>
             )}
           </div>
         )}
 
-        <div className="flex items-end gap-2 rounded-xl border border-line bg-white px-2 py-2 focus-within:border-amber-300">
-          <button
-            onClick={() => fileRef.current?.click()}
-            title="Attach a picture"
-            className="shrink-0 rounded-md px-1.5 py-1 text-neutral-400 transition hover:bg-neutral-100 hover:text-ink"
-          >
-            🖼
-          </button>
-          <button
-            onClick={pickFolder}
-            title="Diagram a local code folder"
-            className="shrink-0 rounded-md px-1.5 py-1 text-neutral-400 transition hover:bg-neutral-100 hover:text-ink"
-          >
-            📁
-          </button>
-          <input
-            ref={fileRef}
-            type="file"
-            accept="image/*"
-            className="hidden"
-            onChange={(e) => {
-              takeImageFile(e.target.files?.[0]);
-              e.target.value = "";
-            }}
-          />
+        <div className="rounded-2xl border border-line bg-white px-3 pb-2 pt-2.5 transition focus-within:border-amber-300 focus-within:ring-2 focus-within:ring-amber-100">
           <textarea
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
@@ -232,20 +209,48 @@ export function AgentPanel({
               }
             }}
             rows={1}
-            placeholder="Message, or paste a picture…"
-            className="max-h-32 flex-1 resize-none bg-transparent text-sm text-ink outline-none placeholder:text-neutral-400"
+            placeholder="Message your canvas partner…"
+            className="block max-h-40 w-full resize-none bg-transparent text-sm leading-6 text-ink outline-none placeholder:text-neutral-400"
           />
-          <button
-            onClick={submit}
-            disabled={!canSend}
-            className="shrink-0 rounded-lg bg-amber-500 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-amber-600 disabled:opacity-40"
-          >
-            Send
-          </button>
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => {
+              takeImageFile(e.target.files?.[0]);
+              e.target.value = "";
+            }}
+          />
+          <div className="mt-1 flex items-center gap-0.5">
+            <button
+              onClick={() => fileRef.current?.click()}
+              title="Add a picture"
+              aria-label="Add a picture"
+              className="rounded-lg p-1.5 text-neutral-400 transition hover:bg-neutral-100 hover:text-ink"
+            >
+              <ImageIcon className="h-[18px] w-[18px]" />
+            </button>
+            <button
+              onClick={pickFolder}
+              title="Diagram a local code folder"
+              aria-label="Diagram a local code folder"
+              className={`rounded-lg p-1.5 transition hover:bg-neutral-100 hover:text-ink ${repoRoot ? "text-amber-600" : "text-neutral-400"}`}
+            >
+              <Folder className="h-[18px] w-[18px]" />
+            </button>
+            <div className="flex-1" />
+            <button
+              onClick={submit}
+              disabled={!canSend}
+              aria-label="Send"
+              className="flex h-8 w-8 items-center justify-center rounded-full bg-amber-500 text-white transition hover:bg-amber-600 disabled:bg-neutral-200 disabled:text-neutral-400"
+            >
+              <ArrowUp className="h-[18px] w-[18px]" strokeWidth={2.5} />
+            </button>
+          </div>
         </div>
-        <p className="mt-1.5 px-1 text-[11px] text-neutral-400">
-          Enter to send · paste or 🖼 to add a picture · 📁 to diagram a code folder
-        </p>
+        <p className="mt-1.5 px-1 text-[11px] text-neutral-400">Enter to send · Shift+Enter for a new line</p>
       </div>
     </aside>
   );
