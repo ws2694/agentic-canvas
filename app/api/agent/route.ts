@@ -1,11 +1,66 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { MODEL, SYSTEM_PROMPT, TOOLS } from "@/lib/agent";
+import { MODELS, SYSTEM_PROMPT, TOOLS } from "@/lib/agent";
 import type { AgentEvent, AgentRequest, SceneItem } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
 
 const MAX_TURNS = 8;
+
+// True for "Claude is limited / unavailable" — the cases where retrying the same
+// model won't help but a different tier might.
+function isLimited(err: unknown): boolean {
+  // 429 rate limit, 529 overloaded, or a transient 5xx — retrying the same
+  // model won't help, but a different tier might.
+  return (
+    err instanceof Anthropic.APIError &&
+    [429, 500, 502, 503, 529].includes((err as { status?: number }).status ?? 0)
+  );
+}
+
+// Run one turn, falling forward through the model chain on a limit/overload.
+// Returns the chosen tier index so the caller can stay there for later turns.
+async function runTurn(
+  client: Anthropic,
+  startIdx: number,
+  base: { system: string; tools: Anthropic.Tool[]; messages: Anthropic.MessageParam[] },
+  onText: (t: string) => void,
+  onFallback: (fromLabel: string, toLabel: string) => void,
+): Promise<{ final: Anthropic.Message; idx: number }> {
+  let lastErr: unknown;
+  for (let i = startIdx; i < MODELS.length; i++) {
+    const tier = MODELS[i];
+    let produced = false;
+    try {
+      const ms = client.messages.stream({
+        model: tier.model,
+        max_tokens: 16000,
+        system: base.system,
+        tools: base.tools,
+        messages: base.messages,
+        ...tier.params,
+      } as any);
+      ms.on("text", (delta) => {
+        if (delta) {
+          produced = true;
+          onText(delta);
+        }
+      });
+      const final = await ms.finalMessage();
+      return { final, idx: i };
+    } catch (err) {
+      lastErr = err;
+      // Only fall back before any text streamed (avoids duplicated output) and
+      // only for limit/overload errors with a tier left to try.
+      if (!produced && isLimited(err) && i + 1 < MODELS.length) {
+        onFallback(tier.label, MODELS[i + 1].label);
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastErr;
+}
 
 const LABELABLE = new Set(["rectangle", "ellipse", "diamond"]);
 
@@ -73,28 +128,21 @@ export async function POST(req: Request) {
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
       };
 
+      // Stays on the highest available tier once a fallback happens.
+      let activeIdx = 0;
       try {
         for (let turn = 0; turn < MAX_TURNS; turn++) {
           send({ type: "status", status: "thinking" });
 
-          const ms = client.messages.stream({
-            model: MODEL,
-            max_tokens: 16000,
-            // Adaptive thinking is the correct mode for Opus 4.8; medium effort
-            // keeps the co-editing loop snappy (less up-front thinking before the
-            // first token). The 0.68 SDK types lag the API, so cast the params.
-            thinking: { type: "adaptive" },
-            output_config: { effort: "medium" },
-            system: SYSTEM_PROMPT,
-            tools: TOOLS,
-            messages,
-          } as any);
-
-          ms.on("text", (delta) => {
-            if (delta) send({ type: "text", text: delta });
-          });
-
-          const final = await ms.finalMessage();
+          const { final, idx } = await runTurn(
+            client,
+            activeIdx,
+            { system: SYSTEM_PROMPT, tools: TOOLS, messages },
+            (t) => send({ type: "text", text: t }),
+            (fromLabel, toLabel) =>
+              send({ type: "notice", message: `${fromLabel} is busy — switched to ${toLabel}.` }),
+          );
+          activeIdx = idx;
           messages.push({ role: "assistant", content: final.content });
 
           const toolUses = final.content.filter(

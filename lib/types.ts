@@ -36,6 +36,7 @@ export type AgentEvent =
   | { type: "draw"; elements: SkeletonElement[]; note?: string }
   | { type: "update"; patches: ElementPatch[] }
   | { type: "delete"; ids: string[] }
+  | { type: "notice"; message: string }
   | { type: "done" }
   | { type: "error"; message: string };
 

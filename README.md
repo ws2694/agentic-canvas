@@ -40,6 +40,26 @@ You need an Anthropic API key from https://console.anthropic.com.
 - `@excalidraw/excalidraw` for the canvas
 - `@anthropic-ai/sdk` — `claude-opus-4-8`, adaptive thinking, tool use, streamed over SSE
 
+## Model fallback
+
+If the primary model is rate-limited (429) or overloaded (529) before it starts
+streaming, the same turn retries on the next tier and stays there for the rest of
+the session — so a busy Opus doesn't stall the canvas:
+
+```
+Opus 4.8  →  Sonnet 4.6  →  Haiku 4.5
+```
+
+You'll see a short "Opus is busy — switched to Sonnet" note in the chat when it
+happens. Override the chain with an env var (comma-separated model ids):
+
+```bash
+AGENT_MODELS=claude-opus-4-8,claude-sonnet-4-6,claude-haiku-4-5
+```
+
+This covers per-model limits and overload. It does **not** cover your whole
+Anthropic account running out of credits — for that you'd add a second provider.
+
 ## Layout
 
 ```

@@ -186,6 +186,8 @@ export default function CanvasApp() {
                 const cur = api.getSceneElements() as any[];
                 updateScene(applyDelete(cur, event.ids));
               });
+            } else if (event.type === "notice") {
+              addNote(assistantId, event.message);
             } else if (event.type === "error") {
               assistantText += assistantText ? `\n\n⚠ ${event.message}` : `⚠ ${event.message}`;
               appendAssistant(assistantId, { text: assistantText });
