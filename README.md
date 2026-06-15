@@ -22,6 +22,21 @@ Under the hood the agent has three tools — `draw`, `update`, `delete` — that
 Excalidraw elements. The API route streams the agent's text and tool calls over
 SSE; the client applies each edit to the live scene.
 
+## Generate from a picture or a codebase
+
+Two ways to seed a diagram beyond typing:
+
+- **From a picture** — paste an image into the chat (or 🖼 to attach, or drag-drop):
+  a whiteboard photo, a hand sketch, a screenshot of an existing diagram. The agent
+  (Claude / gpt-4o vision) recreates it on the canvas, cleaned up with the visual
+  language. Works locally and on the deploy.
+- **From a codebase** — 📁 to point at a **local folder**. The agent gets scoped
+  `list_dir` / `read_file` tools, reads the entry points and key files, and draws
+  the architecture (components, layers, dependencies). It reads the real code, so
+  the diagram reflects what's actually there. **Local only** — it reads your
+  machine's filesystem, so it's disabled on Vercel and scoped to the folder you
+  name (no path traversal outside it).
+
 ## Run it
 
 ```bash

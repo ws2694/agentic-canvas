@@ -1,13 +1,12 @@
-import { SYSTEM_PROMPT, TOOLS } from "@/lib/agent";
+import { CODEBASE_TOOLS, SYSTEM_PROMPT, TOOLS } from "@/lib/agent";
+import { CODEBASE_TOOL_NAMES, codebaseAllowed, rootExists, runCodebaseTool } from "@/lib/codebase";
 import { buildProviders, shouldFallback } from "@/lib/providers";
-import type { LlmMessage, Provider, ToolCall, TurnResult } from "@/lib/providers";
+import type { LlmMessage, Provider, ToolCall, ToolDef, TurnResult } from "@/lib/providers";
 import { sceneToText } from "@/lib/scene";
 import type { AgentEvent, AgentRequest } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
-
-const MAX_TURNS = 8;
 
 // Run one turn, falling forward through the provider chain when a backend is
 // limited/unavailable. Returns the chosen provider index so the caller can stay
@@ -15,7 +14,7 @@ const MAX_TURNS = 8;
 async function runTurn(
   providers: Provider[],
   startIdx: number,
-  base: { messages: LlmMessage[]; onText: (t: string) => void },
+  base: { messages: LlmMessage[]; tools: ToolDef[]; onText: (t: string) => void },
   onFallback: (fromLabel: string, toLabel: string) => void,
 ): Promise<{ result: TurnResult; idx: number }> {
   let lastErr: unknown;
@@ -25,7 +24,7 @@ async function runTurn(
     try {
       const result = await provider.streamTurn({
         system: SYSTEM_PROMPT,
-        tools: TOOLS,
+        tools: base.tools,
         messages: base.messages,
         onText: (delta) => {
           produced = true;
@@ -35,8 +34,6 @@ async function runTurn(
       return { result, idx: i };
     } catch (err) {
       lastErr = err;
-      // Only fall back before any text streamed (avoids duplicated output) and
-      // only when the backend looks unavailable, not on a genuine request bug.
       if (!produced && shouldFallback(err) && i + 1 < providers.length) {
         onFallback(provider.label, providers[i + 1].label);
         continue;
@@ -63,6 +60,14 @@ export async function POST(req: Request) {
     return new Response(JSON.stringify({ error: "Invalid JSON body." }), { status: 400 });
   }
 
+  // Codebase mode: only when a folder is attached, we're running locally, and it
+  // exists. Otherwise just chat/draw with the canvas tools.
+  const repoRoot = body.repoRoot?.trim();
+  const useCodebase = !!repoRoot && codebaseAllowed() && (await rootExists(repoRoot));
+  const tools: ToolDef[] = useCodebase ? [...TOOLS, ...CODEBASE_TOOLS] : TOOLS;
+  // More round-trips needed when the agent is reading files before it draws.
+  const maxTurns = useCodebase ? 24 : 8;
+
   const encoder = new TextEncoder();
 
   // Normalized conversation: prior text turns + the new turn with scene context.
@@ -73,10 +78,10 @@ export async function POST(req: Request) {
         ? { role: "assistant", content: t.text, toolCalls: [] }
         : { role: "user", content: t.text },
     );
-  messages.push({
-    role: "user",
-    content: `${sceneToText(body.scene ?? [])}\n\n---\n${body.message}`,
-  });
+
+  let prompt = `${sceneToText(body.scene ?? [])}\n\n---\n${body.message}`;
+  if (useCodebase) prompt += `\n\n[A local codebase is attached at ${repoRoot}. Explore it with list_dir / read_file, then draw its architecture.]`;
+  messages.push({ role: "user", content: prompt, image: body.image });
 
   const stream = new ReadableStream({
     async start(controller) {
@@ -84,16 +89,16 @@ export async function POST(req: Request) {
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
       };
 
-      // Stays on the highest available provider once a fallback happens.
       let activeIdx = 0;
+      let announcedReading = false;
       try {
-        for (let turn = 0; turn < MAX_TURNS; turn++) {
+        for (let turn = 0; turn < maxTurns; turn++) {
           send({ type: "status", status: "thinking" });
 
           const { result, idx } = await runTurn(
             providers,
             activeIdx,
-            { messages, onText: (t) => send({ type: "text", text: t }) },
+            { messages, tools, onText: (t) => send({ type: "text", text: t }) },
             (fromLabel, toLabel) =>
               send({ type: "notice", message: `${fromLabel} is busy — switched to ${toLabel}.` }),
           );
@@ -102,11 +107,17 @@ export async function POST(req: Request) {
 
           if (!result.toolCalls.length) break;
 
-          send({ type: "status", status: "drawing" });
+          const drawing = result.toolCalls.some((c) => !CODEBASE_TOOL_NAMES.has(c.name));
+          if (drawing) send({ type: "status", status: "drawing" });
 
           for (const call of result.toolCalls) {
-            dispatchToolCall(call, send);
-            messages.push({ role: "tool", toolCallId: call.id, content: "Applied to the canvas." });
+            const resultText = await handleToolCall(call, repoRoot, useCodebase, send, () => {
+              if (!announcedReading) {
+                announcedReading = true;
+                send({ type: "notice", message: "Reading the codebase…" });
+              }
+            });
+            messages.push({ role: "tool", toolCallId: call.id, content: resultText });
           }
         }
 
@@ -130,8 +141,23 @@ export async function POST(req: Request) {
   });
 }
 
-function dispatchToolCall(call: ToolCall, send: (e: AgentEvent) => void) {
-  const input = call.input ?? {};
+// Canvas tools are applied on the client (forwarded over SSE); codebase tools
+// run here on the server and feed their output back to the model.
+async function handleToolCall(
+  call: ToolCall,
+  repoRoot: string | undefined,
+  useCodebase: boolean,
+  send: (e: AgentEvent) => void,
+  onCodebaseRead: () => void,
+): Promise<string> {
+  const input = (call.input ?? {}) as Record<string, unknown>;
+
+  if (CODEBASE_TOOL_NAMES.has(call.name)) {
+    if (!useCodebase || !repoRoot) return "No codebase is attached.";
+    onCodebaseRead();
+    return runCodebaseTool(call.name, input, repoRoot);
+  }
+
   if (call.name === "draw") {
     send({
       type: "draw",
@@ -143,4 +169,5 @@ function dispatchToolCall(call: ToolCall, send: (e: AgentEvent) => void) {
   } else if (call.name === "delete") {
     send({ type: "delete", ids: Array.isArray(input.ids) ? (input.ids as any) : [] });
   }
+  return "Applied to the canvas.";
 }

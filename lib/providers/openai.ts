@@ -10,7 +10,17 @@ export function toOpenAIMessages(system: string, messages: LlmMessage[]): any[] 
   const out: any[] = [{ role: "system", content: system }];
   for (const m of messages) {
     if (m.role === "user") {
-      out.push({ role: "user", content: m.content });
+      if (m.image) {
+        out.push({
+          role: "user",
+          content: [
+            { type: "text", text: m.content },
+            { type: "image_url", image_url: { url: `data:${m.image.mediaType};base64,${m.image.data}` } },
+          ],
+        });
+      } else {
+        out.push({ role: "user", content: m.content });
+      }
     } else if (m.role === "assistant") {
       const msg: any = { role: "assistant", content: m.content || null };
       if (m.toolCalls.length) {

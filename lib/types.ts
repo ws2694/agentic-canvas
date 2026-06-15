@@ -54,8 +54,12 @@ export type SceneItem = {
 // Client -> server request body.
 export type ChatTurn = { role: "user" | "assistant"; text: string };
 
+export type ImageInput = { mediaType: string; data: string }; // base64, no data: prefix
+
 export type AgentRequest = {
   message: string;
   history: ChatTurn[];
   scene: SceneItem[];
+  image?: ImageInput; // a pasted picture to recreate
+  repoRoot?: string; // a local folder to diagram (local only)
 };

@@ -14,7 +14,7 @@ import {
   summarizeScene,
 } from "@/lib/elements";
 import type { AgentEvent, ChatTurn } from "@/lib/types";
-import { AgentPanel, type ChatMessage } from "@/components/AgentPanel";
+import { AgentPanel, type ChatMessage, type SendOpts } from "@/components/AgentPanel";
 
 const Excalidraw = dynamic(
   async () => (await import("@excalidraw/excalidraw")).Excalidraw,
@@ -176,7 +176,7 @@ export default function CanvasApp({ docId, initialTitle, initialScene, initialCh
   }, []);
 
   const send = useCallback(
-    async (text: string) => {
+    async (text: string, opts?: SendOpts) => {
       const api = apiRef.current;
       if (!api || busy) return;
       setBusy(true);
@@ -195,7 +195,13 @@ export default function CanvasApp({ docId, initialTitle, initialScene, initialCh
         const res = await fetch("/api/agent", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ message: text, history, scene }),
+          body: JSON.stringify({
+            message: text,
+            history,
+            scene,
+            image: opts?.image,
+            repoRoot: opts?.repoRoot,
+          }),
         });
         if (!res.ok || !res.body) {
           const err = await res.json().catch(() => ({ error: "Request failed." }));

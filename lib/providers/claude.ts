@@ -19,7 +19,17 @@ export function toAnthropicMessages(messages: LlmMessage[]): Anthropic.MessagePa
   const out: Anthropic.MessageParam[] = [];
   for (const m of messages) {
     if (m.role === "user") {
-      out.push({ role: "user", content: m.content });
+      if (m.image) {
+        out.push({
+          role: "user",
+          content: [
+            { type: "image", source: { type: "base64", media_type: m.image.mediaType, data: m.image.data } },
+            { type: "text", text: m.content },
+          ] as any,
+        });
+      } else {
+        out.push({ role: "user", content: m.content });
+      }
     } else if (m.role === "assistant") {
       const content: any[] = [];
       if (m.content.trim()) content.push({ type: "text", text: m.content });
