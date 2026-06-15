@@ -62,13 +62,15 @@ export async function POST(req: Request) {
           const ms = client.messages.stream({
             model: MODEL,
             max_tokens: 16000,
-            // Adaptive thinking is the correct mode for Opus 4.8; the SDK's
-            // types lag the API, so cast the one field.
-            thinking: { type: "adaptive" } as any,
+            // Adaptive thinking is the correct mode for Opus 4.8; medium effort
+            // keeps the co-editing loop snappy (less up-front thinking before the
+            // first token). The 0.68 SDK types lag the API, so cast the params.
+            thinking: { type: "adaptive" },
+            output_config: { effort: "medium" },
             system: SYSTEM_PROMPT,
             tools: TOOLS,
             messages,
-          });
+          } as any);
 
           ms.on("text", (delta) => {
             if (delta) send({ type: "text", text: delta });

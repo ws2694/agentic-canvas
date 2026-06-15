@@ -5,11 +5,27 @@ import type { ElementPatch, SceneItem, SkeletonElement } from "@/lib/types";
 
 type AnyElement = Record<string, any>;
 
-// Turn the agent's loose skeletons into real Excalidraw elements. Bindings
-// (arrow start/end -> shape id) resolve when the batch is converted together.
-export async function convertSkeletons(skeletons: SkeletonElement[]): Promise<AnyElement[]> {
+// Turn the agent's loose skeletons into real Excalidraw elements. Arrows resolve
+// their endpoints against both this batch and whatever is already on the canvas
+// (`existing`), so the agent can wire up boxes it drew in earlier turns.
+export async function convertSkeletons(
+  skeletons: SkeletonElement[],
+  existing: AnyElement[] = [],
+): Promise<AnyElement[]> {
   const { convertToExcalidrawElements } = await import("@excalidraw/excalidraw");
-  const clean = withArrowGeometry(skeletons.filter(Boolean)).map(normalize);
+
+  // Lookup of connectable shapes by id: existing canvas first, then this batch.
+  const shapes = new Map<string, AnyElement>();
+  for (const e of existing) {
+    if (e?.id && e.type !== "arrow" && e.type !== "line" && e.type !== "text" && !e.isDeleted) {
+      shapes.set(e.id, e);
+    }
+  }
+  for (const s of skeletons) {
+    if (s.id && s.type !== "arrow" && s.type !== "line") shapes.set(s.id, s as AnyElement);
+  }
+
+  const clean = withArrowGeometry(skeletons.filter(Boolean), shapes).map(normalize);
   try {
     return convertToExcalidrawElements(clean as any) as AnyElement[];
   } catch (err) {
@@ -29,19 +45,15 @@ export async function convertSkeletons(skeletons: SkeletonElement[]): Promise<An
   }
 }
 
-// An arrow/line that only carries `start`/`end` bindings has no geometry, so
-// Excalidraw renders it zero-length (invisible). Derive x/y/width/height from
-// the shapes it connects. Bindings stay, so Excalidraw still clips the endpoints
-// to the shape edges and re-routes when shapes move.
 type Pt = { x: number; y: number };
 
-function center(s: SkeletonElement): Pt {
+function center(s: AnyElement): Pt {
   return { x: s.x + (s.width ?? 100) / 2, y: s.y + (s.height ?? 60) / 2 };
 }
 
 // Point on a shape's boundary along the ray from its center toward `toward`,
 // pushed out by a small gap so the arrowhead doesn't touch the box.
-function edgePoint(s: SkeletonElement, toward: Pt, gap = 6): Pt {
+function edgePoint(s: AnyElement, toward: Pt, gap = 6): Pt {
   const c = center(s);
   const dx = toward.x - c.x;
   const dy = toward.y - c.y;
@@ -56,11 +68,16 @@ function edgePoint(s: SkeletonElement, toward: Pt, gap = 6): Pt {
   return { x: c.x + dx * (t + g), y: c.y + dy * (t + g) };
 }
 
-function withArrowGeometry(skeletons: SkeletonElement[]): SkeletonElement[] {
-  const shapes = new Map<string, SkeletonElement>();
-  for (const s of skeletons) {
-    if (s.id && s.type !== "arrow" && s.type !== "line") shapes.set(s.id, s);
-  }
+// An arrow that carries only `start`/`end` references has no geometry, so
+// Excalidraw renders it zero-length (invisible) — and `start.id`/`end.id` only
+// bind to shapes inside the same convert batch, never to existing canvas shapes.
+// So we resolve endpoints ourselves (edge-to-edge between the linked shapes) and
+// drop the binding refs, emitting a plain arrow with explicit geometry that
+// always renders, whether the boxes were drawn this turn or earlier.
+function withArrowGeometry(
+  skeletons: SkeletonElement[],
+  shapes: Map<string, AnyElement>,
+): SkeletonElement[] {
   const fixedPoint = (ref?: { id?: string; x?: number; y?: number }): Pt | null =>
     ref && typeof ref.x === "number" && typeof ref.y === "number" ? { x: ref.x, y: ref.y } : null;
   const shapeOf = (ref?: { id?: string }) =>
@@ -68,14 +85,9 @@ function withArrowGeometry(skeletons: SkeletonElement[]): SkeletonElement[] {
 
   return skeletons.map((s) => {
     if (s.type !== "arrow" && s.type !== "line") return s;
-    const hasGeometry =
-      Array.isArray((s as AnyElement).points) ||
-      (typeof s.width === "number" && typeof s.height === "number" && (s.width || s.height));
-    if (hasGeometry) return s;
 
     const startShape = shapeOf(s.start);
     const endShape = shapeOf(s.end);
-    // A target for each end: the other end's center (or its fixed point).
     const startTarget = endShape ? center(endShape) : fixedPoint(s.end);
     const endTarget = startShape ? center(startShape) : fixedPoint(s.start);
 
@@ -83,9 +95,18 @@ function withArrowGeometry(skeletons: SkeletonElement[]): SkeletonElement[] {
       fixedPoint(s.start) ?? (startShape && startTarget ? edgePoint(startShape, startTarget) : null);
     const p2 =
       fixedPoint(s.end) ?? (endShape && endTarget ? edgePoint(endShape, endTarget) : null);
-    if (!p1 || !p2) return s;
 
-    return { ...s, x: p1.x, y: p1.y, width: p2.x - p1.x, height: p2.y - p1.y };
+    // Strip the binding refs either way — they can't bind across batches.
+    const { start, end, ...rest } = s;
+    const hasGeometry =
+      Array.isArray((rest as AnyElement).points) ||
+      (typeof rest.width === "number" && typeof rest.height === "number" && (rest.width || rest.height));
+
+    if (p1 && p2) {
+      return { ...rest, x: p1.x, y: p1.y, width: p2.x - p1.x, height: p2.y - p1.y };
+    }
+    // Couldn't resolve endpoints — keep whatever geometry the agent gave.
+    return hasGeometry ? (rest as SkeletonElement) : s;
   });
 }
 

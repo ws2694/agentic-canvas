@@ -59,9 +59,9 @@ export default function CanvasApp() {
     async (skeletons: any[]) => {
       const api = apiRef.current;
       if (!api) return;
-      const converted = await convertSkeletons(skeletons);
-      if (!converted.length) return;
       const base = api.getSceneElements() as any[];
+      const converted = await convertSkeletons(skeletons, base);
+      if (!converted.length) return;
       const reveal = revealOrder(converted);
       // Reveal one at a time so it feels like a collaborator drawing.
       const shown: any[] = [];
