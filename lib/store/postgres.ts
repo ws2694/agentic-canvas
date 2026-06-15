@@ -8,7 +8,7 @@ let ready: Promise<void> | null = null;
 function getPool(): Pool {
   if (!pool) {
     pool = new Pool({
-      connectionString: process.env.DATABASE_URL,
+      connectionString: process.env.DATABASE_URL || process.env.POSTGRES_URL,
       // Neon and most hosted Postgres require SSL.
       ssl: process.env.PGSSL === "disable" ? undefined : { rejectUnauthorized: false },
     });
