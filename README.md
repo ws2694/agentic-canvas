@@ -86,6 +86,14 @@ and stays there for the rest of the session. You'll see a short
 Adding another provider is one file: implement the `Provider` interface in
 `lib/providers/` and add it to the chain in `lib/providers/index.ts`.
 
+## Export to a coding agent
+
+**Export** (top bar) bundles the design for handoff to Claude Code / Codex: a
+`.zip` containing `canvas.png` (the diagram) and `BRIEF.md` (the full conversation
+— your intent plus the agent's reasoning, with the image referenced). Drop both
+into a repo and tell your coding agent to implement the brief, or paste `BRIEF.md`
+into a session and attach the image.
+
 ## Persistence
 
 Canvases are saved automatically. Each lives at `/c/[id]`; the home page lists

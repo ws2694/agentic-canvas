@@ -15,6 +15,8 @@ import {
 } from "@/lib/elements";
 import type { AgentEvent, ChatTurn, ImageInput } from "@/lib/types";
 import { AgentPanel, type ChatMessage, type SendOpts } from "@/components/AgentPanel";
+import { buildBriefMarkdown, slugify } from "@/lib/export";
+import { Download } from "lucide-react";
 
 const Excalidraw = dynamic(
   async () => (await import("@excalidraw/excalidraw")).Excalidraw,
@@ -146,6 +148,7 @@ export default function CanvasApp({ docId, initialTitle, initialScene, initialFi
   const [status, setStatus] = useState<"idle" | "thinking" | "drawing">("idle");
   const [busy, setBusy] = useState(false);
   const [saveState, setSaveState] = useState<"saved" | "saving">("saved");
+  const [exporting, setExporting] = useState(false);
 
   // Latest values for the debounced save closure.
   const messagesRef = useRef(messages);
@@ -156,6 +159,63 @@ export default function CanvasApp({ docId, initialTitle, initialScene, initialFi
   const updateScene = useCallback((elements: any[]) => {
     apiRef.current?.updateScene({ elements });
   }, []);
+
+  // Export a handoff bundle: BRIEF.md (the conversation) + canvas.png (the
+  // diagram), zipped — drop it into a repo for Claude Code / Codex.
+  const exportDesign = useCallback(async () => {
+    const api = apiRef.current;
+    if (!api || exporting) return;
+    setExporting(true);
+    try {
+      const elements = (api.getSceneElements() as any[]).filter((e) => !e.isDeleted);
+      const [excalidraw, jszip] = await Promise.all([
+        import("@excalidraw/excalidraw"),
+        import("jszip"),
+      ]);
+      const JSZip = (jszip as any).default ?? jszip;
+
+      // exportToBlob waits on font loading and can stall; never let it hang the
+      // button — race it against a timeout and fall back to a brief-only export.
+      let png: Blob | null = null;
+      if (elements.length) {
+        const render = (excalidraw as any)
+          .exportToBlob({
+            elements,
+            files: api.getFiles?.() ?? null,
+            mimeType: "image/png",
+            exportPadding: 24,
+            appState: { exportBackground: true, viewBackgroundColor: "#f6f4ef", exportScale: 2 },
+          })
+          .catch(() => null);
+        png = await Promise.race([
+          render,
+          new Promise<null>((r) => setTimeout(() => r(null), 12000)),
+        ]);
+      }
+
+      let md = buildBriefMarkdown(titleRef.current, messagesRef.current);
+      if (elements.length && !png) {
+        md += "\n_(The diagram image couldn't be rendered for export — open the canvas to view it.)_\n";
+      }
+
+      const zip = new JSZip();
+      zip.file("BRIEF.md", md);
+      if (png) zip.file("canvas.png", png);
+      const blob = await zip.generateAsync({ type: "blob" });
+
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${slugify(titleRef.current)}.zip`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error("[canvas] export failed:", err);
+    } finally {
+      setExporting(false);
+    }
+  }, [exporting]);
 
   // ---- autosave ----
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -331,6 +391,15 @@ export default function CanvasApp({ docId, initialTitle, initialScene, initialFi
           placeholder="Untitled canvas"
           className="min-w-0 flex-1 bg-transparent text-sm font-medium text-ink outline-none placeholder:text-neutral-400"
         />
+        <button
+          onClick={exportDesign}
+          disabled={exporting}
+          title="Export the brief + diagram (for Claude Code / Codex)"
+          className="flex items-center gap-1.5 rounded-md px-2 py-1 text-sm text-neutral-500 transition hover:bg-neutral-100 hover:text-ink disabled:opacity-50"
+        >
+          <Download className="h-4 w-4" />
+          {exporting ? "Exporting…" : "Export"}
+        </button>
         <span className="text-xs text-neutral-400">{saveState === "saving" ? "Saving…" : "Saved"}</span>
       </header>
 
