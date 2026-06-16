@@ -64,6 +64,15 @@ export function AgentPanel({
   const [folderDraft, setFolderDraft] = useState<string | null>(null); // fallback path editor
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const taRef = useRef<HTMLTextAreaElement>(null);
+
+  // Grow the input to fit its content (up to a cap, then scroll).
+  useEffect(() => {
+    const el = taRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 220)}px`;
+  }, [draft]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
@@ -285,6 +294,7 @@ export function AgentPanel({
 
         <div className="rounded-2xl border border-line bg-white px-3 pb-2 pt-2.5 transition focus-within:border-amber-300 focus-within:ring-2 focus-within:ring-amber-100">
           <textarea
+            ref={taRef}
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             onPaste={onPaste}
@@ -296,7 +306,7 @@ export function AgentPanel({
             }}
             rows={1}
             placeholder="Message your canvas partner…"
-            className="block max-h-40 w-full resize-none bg-transparent text-sm leading-6 text-ink outline-none placeholder:text-neutral-400"
+            className="block max-h-[220px] w-full resize-none overflow-y-auto bg-transparent text-sm leading-6 text-ink outline-none placeholder:text-neutral-400"
           />
           <input
             ref={fileRef}
