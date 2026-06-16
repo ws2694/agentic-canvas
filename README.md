@@ -30,12 +30,13 @@ Two ways to seed a diagram beyond typing:
   a whiteboard photo, a hand sketch, a screenshot of an existing diagram. The agent
   (Claude / gpt-4o vision) recreates it on the canvas, cleaned up with the visual
   language. Works locally and on the deploy.
-- **From a codebase** — 📁 to point at a **local folder**. The agent gets scoped
-  `list_dir` / `read_file` tools, reads the entry points and key files, and draws
-  the architecture (components, layers, dependencies). It reads the real code, so
-  the diagram reflects what's actually there. **Local only** — it reads your
-  machine's filesystem, so it's disabled on Vercel and scoped to the folder you
-  name (no path traversal outside it).
+- **From a codebase** — click the folder icon to open your OS folder picker (no
+  path typing) and choose a repo. The browser reads the file tree + the most
+  relevant files (configs, entry points, source — filtered for `node_modules`
+  etc., size-capped) into a snapshot and the agent draws the architecture from
+  the real code. Because the read happens in the browser, this works on the
+  deploy too. Browsers without the File System Access API fall back to a typed
+  path (read server-side, local only).
 
 ## Run it
 

@@ -200,6 +200,7 @@ export default function CanvasApp({ docId, initialTitle, initialScene, initialCh
             history,
             scene,
             image: opts?.image,
+            codebase: opts?.codebase,
             repoRoot: opts?.repoRoot,
           }),
         });

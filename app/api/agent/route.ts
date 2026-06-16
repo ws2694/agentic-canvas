@@ -3,7 +3,13 @@ import { CODEBASE_TOOL_NAMES, codebaseAllowed, rootExists, runCodebaseTool } fro
 import { buildProviders, shouldFallback } from "@/lib/providers";
 import type { LlmMessage, Provider, ToolCall, ToolDef, TurnResult } from "@/lib/providers";
 import { sceneToText } from "@/lib/scene";
-import type { AgentEvent, AgentRequest } from "@/lib/types";
+import type { AgentEvent, AgentRequest, CodebaseSnapshot } from "@/lib/types";
+
+function codebaseToText(cb: CodebaseSnapshot): string {
+  const tree = cb.tree.join("\n");
+  const files = cb.files.map((f) => `### ${f.path}\n\`\`\`\n${f.content}\n\`\`\``).join("\n\n");
+  return `A codebase "${cb.name}" is attached — study it and draw its architecture (real components, how they depend on each other, grouped by layer).\n\nFile tree:\n${tree}\n\n--- key files ---\n${files}`;
+}
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -60,13 +66,14 @@ export async function POST(req: Request) {
     return new Response(JSON.stringify({ error: "Invalid JSON body." }), { status: 400 });
   }
 
-  // Codebase mode: only when a folder is attached, we're running locally, and it
-  // exists. Otherwise just chat/draw with the canvas tools.
+  // Codebase: a browser-read snapshot is injected as context. The typed-path
+  // fallback reads the server filesystem via tools (local only).
+  const codebase = body.codebase;
   const repoRoot = body.repoRoot?.trim();
-  const useCodebase = !!repoRoot && codebaseAllowed() && (await rootExists(repoRoot));
-  const tools: ToolDef[] = useCodebase ? [...TOOLS, ...CODEBASE_TOOLS] : TOOLS;
-  // More round-trips needed when the agent is reading files before it draws.
-  const maxTurns = useCodebase ? 24 : 8;
+  const useServerCodebase = !codebase && !!repoRoot && codebaseAllowed() && (await rootExists(repoRoot));
+  const tools: ToolDef[] = useServerCodebase ? [...TOOLS, ...CODEBASE_TOOLS] : TOOLS;
+  // The server-read path needs round-trips to read files before drawing.
+  const maxTurns = useServerCodebase ? 24 : 8;
 
   const encoder = new TextEncoder();
 
@@ -80,7 +87,8 @@ export async function POST(req: Request) {
     );
 
   let prompt = `${sceneToText(body.scene ?? [])}\n\n---\n${body.message}`;
-  if (useCodebase) prompt += `\n\n[A local codebase is attached at ${repoRoot}. Explore it with list_dir / read_file, then draw its architecture.]`;
+  if (codebase) prompt += `\n\n${codebaseToText(codebase)}`;
+  else if (useServerCodebase) prompt += `\n\n[A local codebase is attached at ${repoRoot}. Explore it with list_dir / read_file, then draw its architecture.]`;
   messages.push({ role: "user", content: prompt, image: body.image });
 
   const stream = new ReadableStream({
@@ -111,7 +119,7 @@ export async function POST(req: Request) {
           if (drawing) send({ type: "status", status: "drawing" });
 
           for (const call of result.toolCalls) {
-            const resultText = await handleToolCall(call, repoRoot, useCodebase, send, () => {
+            const resultText = await handleToolCall(call, repoRoot, useServerCodebase, send, () => {
               if (!announcedReading) {
                 announcedReading = true;
                 send({ type: "notice", message: "Reading the codebase…" });

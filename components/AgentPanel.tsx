@@ -3,8 +3,9 @@
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { ArrowUp, Folder, Image as ImageIcon, X } from "lucide-react";
-import type { ImageInput } from "@/lib/types";
+import { ArrowUp, Folder, Image as ImageIcon, Loader2, X } from "lucide-react";
+import { canPickDirectory, pickCodebaseSnapshot } from "@/lib/snapshot";
+import type { CodebaseSnapshot, ImageInput } from "@/lib/types";
 
 export type ChatMessage = {
   id: string;
@@ -13,7 +14,7 @@ export type ChatMessage = {
   notes?: string[];
 };
 
-export type SendOpts = { image?: ImageInput; repoRoot?: string };
+export type SendOpts = { image?: ImageInput; codebase?: CodebaseSnapshot; repoRoot?: string };
 
 type PendingImage = { input: ImageInput; preview: string };
 
@@ -40,8 +41,8 @@ async function fileToImage(file: File): Promise<PendingImage> {
 const PROMPTS = [
   "Sketch the architecture for a URL shortener",
   "Lay out a 4-step launch plan",
-  "Paste a sketch and I'll redraw it cleanly",
-  "Diagram a local codebase folder",
+  "Map a request flow through a 3-tier app",
+  "What's missing from this design?",
 ];
 
 export function AgentPanel({
@@ -57,8 +58,10 @@ export function AgentPanel({
 }) {
   const [draft, setDraft] = useState("");
   const [image, setImage] = useState<PendingImage | null>(null);
+  const [codebase, setCodebase] = useState<CodebaseSnapshot | null>(null);
+  const [scanning, setScanning] = useState(false);
   const [repoRoot, setRepoRoot] = useState<string | null>(null);
-  const [folderDraft, setFolderDraft] = useState<string | null>(null); // null = editor closed
+  const [folderDraft, setFolderDraft] = useState<string | null>(null); // fallback path editor
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -67,16 +70,38 @@ export function AgentPanel({
   }, [messages, status]);
 
   const submit = () => {
-    if (busy) return;
+    if (busy || scanning) return;
     let text = draft.trim();
     if (!text) {
       if (image) text = "Recreate this picture on the canvas, cleaned up.";
-      else if (repoRoot) text = "Draw the architecture of this codebase.";
+      else if (codebase || repoRoot) text = "Draw the architecture of this codebase.";
       else return;
     }
-    onSend(text, { image: image?.input, repoRoot: repoRoot ?? undefined });
+    onSend(text, {
+      image: image?.input,
+      codebase: codebase ?? undefined,
+      repoRoot: repoRoot ?? undefined,
+    });
     setDraft("");
-    setImage(null); // image is per-message; the codebase folder stays attached
+    // Attachments are per-message; the canvas carries the result forward.
+    setImage(null);
+    setCodebase(null);
+  };
+
+  // Folder button: open the OS folder picker when the browser supports it,
+  // otherwise fall back to the typed-path field.
+  const chooseFolder = async () => {
+    if (!canPickDirectory()) {
+      setFolderDraft((d) => (d === null ? repoRoot ?? "" : null));
+      return;
+    }
+    setScanning(true);
+    try {
+      const snap = await pickCodebaseSnapshot();
+      if (snap) setCodebase(snap);
+    } finally {
+      setScanning(false);
+    }
   };
 
   const takeImageFile = async (file?: File | null) => {
@@ -107,7 +132,7 @@ export function AgentPanel({
 
   const statusLabel =
     status === "thinking" ? "thinking…" : status === "drawing" ? "drawing on the canvas…" : null;
-  const canSend = !busy && (!!draft.trim() || !!image || !!repoRoot);
+  const canSend = !busy && !scanning && (!!draft.trim() || !!image || !!codebase || !!repoRoot);
 
   return (
     <aside
@@ -206,7 +231,7 @@ export function AgentPanel({
           </div>
         )}
 
-        {(image || (repoRoot && folderDraft === null)) && (
+        {(image || codebase || scanning || (repoRoot && folderDraft === null)) && (
           <div className="mb-2 flex flex-wrap gap-1.5">
             {image && (
               <span className="flex items-center gap-2 rounded-lg border border-line bg-white py-1 pl-1 pr-2 text-xs text-neutral-600">
@@ -214,6 +239,22 @@ export function AgentPanel({
                 <img src={image.preview} alt="" className="h-8 w-8 rounded-md object-cover" />
                 <span>Picture</span>
                 <button onClick={() => setImage(null)} aria-label="Remove picture" className="text-neutral-400 transition hover:text-ink">
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </span>
+            )}
+            {scanning && (
+              <span className="flex items-center gap-1.5 rounded-lg border border-line bg-white px-2 py-1.5 text-xs text-neutral-500">
+                <Loader2 className="h-3.5 w-3.5 animate-spin text-amber-500" />
+                Reading folder…
+              </span>
+            )}
+            {codebase && (
+              <span className="flex max-w-full items-center gap-1.5 rounded-lg border border-line bg-white py-1.5 pl-2 pr-1.5 text-xs text-neutral-600">
+                <Folder className="h-3.5 w-3.5 shrink-0 text-amber-500" />
+                <span className="truncate font-medium">{codebase.name}</span>
+                <span className="shrink-0 text-neutral-400">· {codebase.files.length} files</span>
+                <button onClick={() => setCodebase(null)} aria-label="Remove folder" className="shrink-0 text-neutral-400 transition hover:text-ink">
                   <X className="h-3.5 w-3.5" />
                 </button>
               </span>
@@ -277,12 +318,13 @@ export function AgentPanel({
               <ImageIcon className="h-[18px] w-[18px]" />
             </button>
             <button
-              onClick={toggleFolder}
-              title="Diagram a local code folder"
-              aria-label="Diagram a local code folder"
-              className={`rounded-lg p-1.5 transition hover:bg-neutral-100 hover:text-ink ${repoRoot || folderDraft !== null ? "text-amber-600" : "text-neutral-400"}`}
+              onClick={chooseFolder}
+              disabled={scanning}
+              title="Diagram a code folder"
+              aria-label="Diagram a code folder"
+              className={`rounded-lg p-1.5 transition hover:bg-neutral-100 hover:text-ink disabled:opacity-50 ${codebase || repoRoot || folderDraft !== null || scanning ? "text-amber-600" : "text-neutral-400"}`}
             >
-              <Folder className="h-[18px] w-[18px]" />
+              {scanning ? <Loader2 className="h-[18px] w-[18px] animate-spin" /> : <Folder className="h-[18px] w-[18px]" />}
             </button>
             <div className="flex-1" />
             <button

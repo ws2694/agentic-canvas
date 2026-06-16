@@ -56,10 +56,19 @@ export type ChatTurn = { role: "user" | "assistant"; text: string };
 
 export type ImageInput = { mediaType: string; data: string }; // base64, no data: prefix
 
+// A codebase read in the browser via the folder picker: the file tree plus the
+// contents of the most relevant files (configs, entry points, source).
+export type CodebaseSnapshot = {
+  name: string;
+  tree: string[];
+  files: { path: string; content: string }[];
+};
+
 export type AgentRequest = {
   message: string;
   history: ChatTurn[];
   scene: SceneItem[];
   image?: ImageInput; // a pasted picture to recreate
-  repoRoot?: string; // a local folder to diagram (local only)
+  codebase?: CodebaseSnapshot; // a folder picked in the browser
+  repoRoot?: string; // fallback: a typed local path (server-read, local only)
 };
