@@ -14,6 +14,7 @@ export default async function CanvasPage({ params }: { params: { id: string } })
       docId={doc.id}
       initialTitle={doc.title}
       initialScene={doc.scene as any[]}
+      initialFiles={(doc.files ?? {}) as Record<string, any>}
       initialChat={doc.chat as ChatMessage[]}
     />
   );

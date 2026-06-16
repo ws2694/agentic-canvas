@@ -18,6 +18,7 @@ export async function PUT(req: Request, { params }: Ctx) {
     patch = {
       title: typeof body?.title === "string" ? body.title : undefined,
       scene: Array.isArray(body?.scene) ? body.scene : undefined,
+      files: body?.files && typeof body.files === "object" ? body.files : undefined,
       chat: Array.isArray(body?.chat) ? body.chat : undefined,
     };
   } catch {

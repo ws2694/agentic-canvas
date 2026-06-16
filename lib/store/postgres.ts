@@ -24,11 +24,14 @@ function init(): Promise<void> {
            id text primary key,
            title text not null default 'Untitled canvas',
            scene jsonb not null default '[]'::jsonb,
+           files jsonb not null default '{}'::jsonb,
            chat jsonb not null default '[]'::jsonb,
            created_at timestamptz not null default now(),
            updated_at timestamptz not null default now()
          )`,
       )
+      // Add the files column for tables created before it existed.
+      .then(() => getPool().query(`alter table documents add column if not exists files jsonb not null default '{}'::jsonb`))
       .then(() => undefined);
   }
   return ready;
@@ -39,6 +42,7 @@ function rowToDoc(r: any): CanvasDoc {
     id: r.id,
     title: r.title,
     scene: r.scene ?? [],
+    files: r.files ?? {},
     chat: r.chat ?? [],
     createdAt: new Date(r.created_at).toISOString(),
     updatedAt: new Date(r.updated_at).toISOString(),
@@ -84,13 +88,15 @@ export function createPostgresStore(): Store {
         `update documents set
            title = coalesce($2, title),
            scene = coalesce($3, scene),
-           chat = coalesce($4, chat),
+           files = coalesce($4, files),
+           chat = coalesce($5, chat),
            updated_at = now()
          where id = $1`,
         [
           id,
           patch.title ?? null,
           patch.scene !== undefined ? JSON.stringify(patch.scene) : null,
+          patch.files !== undefined ? JSON.stringify(patch.files) : null,
           patch.chat !== undefined ? JSON.stringify(patch.chat) : null,
         ],
       );

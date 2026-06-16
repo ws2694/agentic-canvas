@@ -89,7 +89,8 @@ export async function POST(req: Request) {
   let prompt = `${sceneToText(body.scene ?? [])}\n\n---\n${body.message}`;
   if (codebase) prompt += `\n\n${codebaseToText(codebase)}`;
   else if (useServerCodebase) prompt += `\n\n[A local codebase is attached at ${repoRoot}. Explore it with list_dir / read_file, then draw its architecture.]`;
-  messages.push({ role: "user", content: prompt, image: body.image });
+  if (body.images?.length) prompt += `\n\n[${body.images.length} image(s) are attached below for this request — look at them.]`;
+  messages.push({ role: "user", content: prompt, images: body.images });
 
   const stream = new ReadableStream({
     async start(controller) {

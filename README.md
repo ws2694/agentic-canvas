@@ -26,10 +26,12 @@ SSE; the client applies each edit to the live scene.
 
 Two ways to seed a diagram beyond typing:
 
-- **From a picture** — paste an image into the chat (or 🖼 to attach, or drag-drop):
-  a whiteboard photo, a hand sketch, a screenshot of an existing diagram. The agent
-  (Claude / gpt-4o vision) recreates it on the canvas, cleaned up with the visual
-  language. Works locally and on the deploy.
+- **From a picture** — drop or paste an image: a whiteboard photo, a hand sketch,
+  a screenshot of an existing diagram. The agent (Claude / gpt-4o vision) recreates
+  it on the canvas, cleaned up with the visual language. Paste it **into the chat**
+  to attach it to one message, or **onto the canvas** — the agent sees image
+  elements on the canvas (the selected ones, or a lone pasted one) and can read,
+  recreate, or build on them. Pasted images persist with the canvas.
 - **From a codebase** — click the folder icon to open your OS folder picker (no
   path typing) and choose a repo. The browser reads the file tree + the most
   relevant files (configs, entry points, source — filtered for `node_modules`

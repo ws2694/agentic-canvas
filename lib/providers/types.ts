@@ -18,7 +18,7 @@ export type ImagePart = { mediaType: string; data: string }; // base64
 // Normalized conversation. The loop builds this; each provider converts it to
 // its own message format per request (the API is stateless on both sides).
 export type LlmMessage =
-  | { role: "user"; content: string; image?: ImagePart }
+  | { role: "user"; content: string; images?: ImagePart[] }
   | { role: "assistant"; content: string; toolCalls: ToolCall[] }
   | { role: "tool"; toolCallId: string; content: string };
 

@@ -10,12 +10,15 @@ export function toOpenAIMessages(system: string, messages: LlmMessage[]): any[] 
   const out: any[] = [{ role: "system", content: system }];
   for (const m of messages) {
     if (m.role === "user") {
-      if (m.image) {
+      if (m.images?.length) {
         out.push({
           role: "user",
           content: [
             { type: "text", text: m.content },
-            { type: "image_url", image_url: { url: `data:${m.image.mediaType};base64,${m.image.data}` } },
+            ...m.images.map((im) => ({
+              type: "image_url",
+              image_url: { url: `data:${im.mediaType};base64,${im.data}` },
+            })),
           ],
         });
       } else {

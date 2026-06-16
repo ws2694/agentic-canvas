@@ -19,11 +19,14 @@ export function toAnthropicMessages(messages: LlmMessage[]): Anthropic.MessagePa
   const out: Anthropic.MessageParam[] = [];
   for (const m of messages) {
     if (m.role === "user") {
-      if (m.image) {
+      if (m.images?.length) {
         out.push({
           role: "user",
           content: [
-            { type: "image", source: { type: "base64", media_type: m.image.mediaType, data: m.image.data } },
+            ...m.images.map((im) => ({
+              type: "image",
+              source: { type: "base64", media_type: im.mediaType, data: im.data },
+            })),
             { type: "text", text: m.content },
           ] as any,
         });

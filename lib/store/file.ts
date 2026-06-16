@@ -21,7 +21,9 @@ function file(id: string) {
 
 async function read(id: string): Promise<CanvasDoc | null> {
   try {
-    return JSON.parse(await fs.readFile(file(id), "utf8")) as CanvasDoc;
+    const doc = JSON.parse(await fs.readFile(file(id), "utf8")) as CanvasDoc;
+    doc.files ??= {}; // older docs predate the files field
+    return doc;
   } catch {
     return null;
   }
@@ -32,7 +34,7 @@ export function createFileStore(): Store {
     async create(title = "Untitled canvas") {
       await ensureDir();
       const now = new Date().toISOString();
-      const doc: CanvasDoc = { id: newId(), title, scene: [], chat: [], createdAt: now, updatedAt: now };
+      const doc: CanvasDoc = { id: newId(), title, scene: [], files: {}, chat: [], createdAt: now, updatedAt: now };
       await fs.writeFile(file(doc.id), JSON.stringify(doc), "utf8");
       return doc;
     },
@@ -60,6 +62,7 @@ export function createFileStore(): Store {
         ...doc,
         ...(patch.title !== undefined ? { title: patch.title } : {}),
         ...(patch.scene !== undefined ? { scene: patch.scene } : {}),
+        ...(patch.files !== undefined ? { files: patch.files } : {}),
         ...(patch.chat !== undefined ? { chat: patch.chat } : {}),
         updatedAt: new Date().toISOString(),
       };

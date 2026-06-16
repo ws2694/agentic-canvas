@@ -13,7 +13,7 @@ import {
   revealOrder,
   summarizeScene,
 } from "@/lib/elements";
-import type { AgentEvent, ChatTurn } from "@/lib/types";
+import type { AgentEvent, ChatTurn, ImageInput } from "@/lib/types";
 import { AgentPanel, type ChatMessage, type SendOpts } from "@/components/AgentPanel";
 
 const Excalidraw = dynamic(
@@ -82,14 +82,63 @@ function keepInView(api: any, justAdded: any[]) {
 let idCounter = 0;
 const nextId = () => `m${Date.now()}_${idCounter++}`;
 
+// Shrink a data URL to a max edge and re-encode as JPEG, so sending canvas
+// images to the agent stays cheap.
+function downscaleDataUrl(dataURL: string, max = 1536): Promise<ImageInput | null> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, max / Math.max(img.width, img.height));
+      const w = Math.max(1, Math.round(img.width * scale));
+      const h = Math.max(1, Math.round(img.height * scale));
+      const c = document.createElement("canvas");
+      c.width = w;
+      c.height = h;
+      const ctx = c.getContext("2d");
+      if (!ctx) return resolve(null);
+      ctx.drawImage(img, 0, 0, w, h);
+      try {
+        const out = c.toDataURL("image/jpeg", 0.85);
+        resolve({ mediaType: "image/jpeg", data: out.slice(out.indexOf(",") + 1) });
+      } catch {
+        resolve(null);
+      }
+    };
+    img.onerror = () => resolve(null);
+    img.src = dataURL;
+  });
+}
+
+// Let the agent see pictures that live on the canvas: the selected image
+// elements, or — if none are selected — the most recent one. Capped + downscaled.
+async function collectCanvasImages(api: any): Promise<ImageInput[]> {
+  const els = (api.getSceneElements() as any[]).filter((e) => e.type === "image" && !e.isDeleted && e.fileId);
+  if (!els.length) return [];
+  const files = api.getFiles?.() ?? {};
+  const selected = api.getAppState?.().selectedElementIds ?? {};
+  const picked = els.some((e) => selected[e.id])
+    ? els.filter((e) => selected[e.id])
+    : [els.sort((a, b) => (b.updated ?? 0) - (a.updated ?? 0))[0]];
+
+  const out: ImageInput[] = [];
+  for (const el of picked.slice(0, 3)) {
+    const url = files[el.fileId]?.dataURL;
+    if (!url) continue;
+    const img = await downscaleDataUrl(url);
+    if (img) out.push(img);
+  }
+  return out;
+}
+
 export type CanvasAppProps = {
   docId: string;
   initialTitle: string;
   initialScene: any[];
+  initialFiles: Record<string, any>;
   initialChat: ChatMessage[];
 };
 
-export default function CanvasApp({ docId, initialTitle, initialScene, initialChat }: CanvasAppProps) {
+export default function CanvasApp({ docId, initialTitle, initialScene, initialFiles, initialChat }: CanvasAppProps) {
   const apiRef = useRef<any>(null);
   const fittedRef = useRef(false);
   const [messages, setMessages] = useState<ChatMessage[]>(initialChat);
@@ -114,11 +163,12 @@ export default function CanvasApp({ docId, initialTitle, initialScene, initialCh
     const api = apiRef.current;
     if (!api) return;
     const scene = (api.getSceneElements() as any[]).filter((e) => !e.isDeleted);
+    const files = api.getFiles?.() ?? {};
     try {
       await fetch(`/api/docs/${docId}`, {
         method: "PUT",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ title: titleRef.current, scene, chat: messagesRef.current }),
+        body: JSON.stringify({ title: titleRef.current, scene, files, chat: messagesRef.current }),
       });
     } finally {
       setSaveState("saved");
@@ -189,6 +239,8 @@ export default function CanvasApp({ docId, initialTitle, initialScene, initialCh
       setMessages((prev) => [...prev, userMsg, assistantMsg]);
 
       const scene = summarizeScene(api.getSceneElements() as any[]);
+      // Explicitly attached image + any picture(s) on the canvas the agent should see.
+      const images = [...(opts?.image ? [opts.image] : []), ...(await collectCanvasImages(api))];
 
       let assistantText = "";
       try {
@@ -199,7 +251,7 @@ export default function CanvasApp({ docId, initialTitle, initialScene, initialCh
             message: text,
             history,
             scene,
-            image: opts?.image,
+            images,
             codebase: opts?.codebase,
             repoRoot: opts?.repoRoot,
           }),
@@ -295,6 +347,7 @@ export default function CanvasApp({ docId, initialTitle, initialScene, initialCh
             onChange={handleChange}
             initialData={{
               elements: initialScene as any,
+              files: initialFiles as any,
               appState: { viewBackgroundColor: "#f6f4ef" },
               scrollToContent: true,
             }}

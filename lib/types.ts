@@ -68,7 +68,7 @@ export type AgentRequest = {
   message: string;
   history: ChatTurn[];
   scene: SceneItem[];
-  image?: ImageInput; // a pasted picture to recreate
+  images?: ImageInput[]; // pasted/attached pictures + images on the canvas
   codebase?: CodebaseSnapshot; // a folder picked in the browser
   repoRoot?: string; // fallback: a typed local path (server-read, local only)
 };
