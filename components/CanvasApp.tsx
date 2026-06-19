@@ -143,6 +143,9 @@ export type CanvasAppProps = {
 export default function CanvasApp({ docId, initialTitle, initialScene, initialFiles, initialChat }: CanvasAppProps) {
   const apiRef = useRef<any>(null);
   const fittedRef = useRef(false);
+  // Becomes true once the canvas has actually shown content this session, so we
+  // can tell a real "user cleared it" from "the initial scene hasn't loaded yet".
+  const loadedNonEmptyRef = useRef(false);
   const [messages, setMessages] = useState<ChatMessage[]>(initialChat);
   const [title, setTitle] = useState(initialTitle);
   const [status, setStatus] = useState<"idle" | "thinking" | "drawing">("idle");
@@ -224,17 +227,30 @@ export default function CanvasApp({ docId, initialTitle, initialScene, initialFi
     const api = apiRef.current;
     if (!api) return;
     const scene = (api.getSceneElements() as any[]).filter((e) => !e.isDeleted);
-    const files = api.getFiles?.() ?? {};
+    if (scene.length > 0) loadedNonEmptyRef.current = true;
+
+    // Guard against the load race: if the canvas reads empty but the doc was
+    // opened with content we've never seen rendered, the initial scene just
+    // hasn't loaded — DON'T overwrite the saved scene/files with emptiness.
+    // Still persist title/chat so those aren't lost.
+    const sceneSafe = !(scene.length === 0 && initialScene.length > 0 && !loadedNonEmptyRef.current);
+
+    const body: Record<string, unknown> = { title: titleRef.current, chat: messagesRef.current };
+    if (sceneSafe) {
+      body.scene = scene;
+      body.files = api.getFiles?.() ?? {};
+    }
+
     try {
       await fetch(`/api/docs/${docId}`, {
         method: "PUT",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ title: titleRef.current, scene, files, chat: messagesRef.current }),
+        body: JSON.stringify(body),
       });
     } finally {
       setSaveState("saved");
     }
-  }, [docId]);
+  }, [docId, initialScene.length]);
 
   const scheduleSave = useCallback(() => {
     setSaveState("saving");
@@ -242,8 +258,15 @@ export default function CanvasApp({ docId, initialTitle, initialScene, initialFi
     saveTimer.current = setTimeout(doSave, 800);
   }, [doSave]);
 
-  // Save when chat or title changes (canvas changes go through onChange below).
+  // Save when chat or title changes. Skip the initial mount run — there's nothing
+  // to save yet, and firing a save before the canvas has loaded is what let an
+  // empty scene clobber a saved one.
+  const didMountRef = useRef(false);
   useEffect(() => {
+    if (!didMountRef.current) {
+      didMountRef.current = true;
+      return;
+    }
     scheduleSave();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [messages, title]);
