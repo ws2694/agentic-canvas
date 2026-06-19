@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { ArrowUp, Folder, Image as ImageIcon, Loader2, X } from "lucide-react";
+import { ArrowUp, Folder, Image as ImageIcon, Loader2, PanelRightClose, X } from "lucide-react";
 import { canPickDirectory, pickCodebaseSnapshot } from "@/lib/snapshot";
 import type { CodebaseSnapshot, ImageInput } from "@/lib/types";
 
@@ -50,11 +50,13 @@ export function AgentPanel({
   status,
   busy,
   onSend,
+  onCollapse,
 }: {
   messages: ChatMessage[];
   status: "idle" | "thinking" | "drawing";
   busy: boolean;
   onSend: (text: string, opts?: SendOpts) => void;
+  onCollapse?: () => void;
 }) {
   const [draft, setDraft] = useState("");
   const [image, setImage] = useState<PendingImage | null>(null);
@@ -153,6 +155,16 @@ export function AgentPanel({
         <span className="inline-block h-2.5 w-2.5 rounded-full bg-amber-500" />
         <h1 className="text-sm font-semibold tracking-tight text-ink">Canvas partner</h1>
         <span className="ml-auto text-xs text-neutral-400">co-editing</span>
+        {onCollapse && (
+          <button
+            onClick={onCollapse}
+            title="Collapse panel"
+            aria-label="Collapse panel"
+            className="-mr-1 rounded-md p-1 text-neutral-400 transition hover:bg-neutral-100 hover:text-ink"
+          >
+            <PanelRightClose className="h-4 w-4" />
+          </button>
+        )}
       </header>
 
       <div ref={scrollRef} className="flex-1 space-y-4 overflow-y-auto px-4 py-4">

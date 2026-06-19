@@ -16,7 +16,7 @@ import {
 import type { AgentEvent, ChatTurn, ImageInput } from "@/lib/types";
 import { AgentPanel, type ChatMessage, type SendOpts } from "@/components/AgentPanel";
 import { buildBriefMarkdown, slugify } from "@/lib/export";
-import { Download } from "lucide-react";
+import { Download, PanelRightClose, PanelRightOpen } from "lucide-react";
 
 const Excalidraw = dynamic(
   async () => (await import("@excalidraw/excalidraw")).Excalidraw,
@@ -149,6 +149,7 @@ export default function CanvasApp({ docId, initialTitle, initialScene, initialFi
   const [busy, setBusy] = useState(false);
   const [saveState, setSaveState] = useState<"saved" | "saving">("saved");
   const [exporting, setExporting] = useState(false);
+  const [panelOpen, setPanelOpen] = useState(true);
 
   // Latest values for the debounced save closure.
   const messagesRef = useRef(messages);
@@ -401,6 +402,14 @@ export default function CanvasApp({ docId, initialTitle, initialScene, initialFi
           {exporting ? "Exporting…" : "Export"}
         </button>
         <span className="text-xs text-neutral-400">{saveState === "saving" ? "Saving…" : "Saved"}</span>
+        <button
+          onClick={() => setPanelOpen((o) => !o)}
+          title={panelOpen ? "Hide chat" : "Show chat"}
+          aria-label={panelOpen ? "Hide chat" : "Show chat"}
+          className="rounded-md p-1.5 text-neutral-400 transition hover:bg-neutral-100 hover:text-ink"
+        >
+          {panelOpen ? <PanelRightClose className="h-4 w-4" /> : <PanelRightOpen className="h-4 w-4" />}
+        </button>
       </header>
 
       <div className="flex flex-1 overflow-hidden">
@@ -422,7 +431,16 @@ export default function CanvasApp({ docId, initialTitle, initialScene, initialFi
             }}
           />
         </div>
-        <AgentPanel messages={messages} status={status} busy={busy} onSend={send} />
+        {/* Kept mounted while hidden so the draft and attachments survive a collapse. */}
+        <div className={panelOpen ? "flex h-full" : "hidden"}>
+          <AgentPanel
+            messages={messages}
+            status={status}
+            busy={busy}
+            onSend={send}
+            onCollapse={() => setPanelOpen(false)}
+          />
+        </div>
       </div>
     </div>
   );
