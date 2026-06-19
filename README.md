@@ -109,6 +109,12 @@ Storage is one env var:
 Vercel's filesystem is ephemeral, so a deploy **must** set `DATABASE_URL` — the
 JSON-file store won't persist there.
 
+**Version history (safety net).** Every scene-changing save first snapshots the
+scene it's about to overwrite (scene + title, throttled to ~one per 30s, last 10
+kept). The top-bar **History** menu lists them and restores any one (restores are
+themselves undoable). Autosave also refuses to write an empty scene over a doc
+that hasn't finished loading, so a slow-loading canvas can't be clobbered.
+
 ## Develop
 
 ```bash

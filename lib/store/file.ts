@@ -1,6 +1,7 @@
 import { promises as fs } from "fs";
 import path from "path";
-import { newId, type CanvasDoc, type DocPatch, type DocSummary, type Store } from "./types";
+import { pushHistory } from "./history";
+import { newId, type CanvasDoc, type DocPatch, type DocSummary, type DocVersionMeta, type Store } from "./types";
 
 // Local dev store: one JSON file per doc under .data/docs/. Zero setup, persists
 // across restarts. On Vercel the project filesystem is read-only, so fall back
@@ -22,7 +23,8 @@ function file(id: string) {
 async function read(id: string): Promise<CanvasDoc | null> {
   try {
     const doc = JSON.parse(await fs.readFile(file(id), "utf8")) as CanvasDoc;
-    doc.files ??= {}; // older docs predate the files field
+    doc.files ??= {}; // older docs predate these fields
+    doc.history ??= [];
     return doc;
   } catch {
     return null;
@@ -34,7 +36,7 @@ export function createFileStore(): Store {
     async create(title = "Untitled canvas") {
       await ensureDir();
       const now = new Date().toISOString();
-      const doc: CanvasDoc = { id: newId(), title, scene: [], files: {}, chat: [], createdAt: now, updatedAt: now };
+      const doc: CanvasDoc = { id: newId(), title, scene: [], files: {}, chat: [], history: [], createdAt: now, updatedAt: now };
       await fs.writeFile(file(doc.id), JSON.stringify(doc), "utf8");
       return doc;
     },
@@ -58,12 +60,18 @@ export function createFileStore(): Store {
     async save(id, patch: DocPatch) {
       const doc = await read(id);
       if (!doc) throw new Error("not found");
+      // Snapshot the scene being overwritten before applying a scene write.
+      const history =
+        patch.scene !== undefined
+          ? pushHistory(doc.history, { scene: doc.scene, title: doc.title }, Date.now())
+          : doc.history;
       const next: CanvasDoc = {
         ...doc,
         ...(patch.title !== undefined ? { title: patch.title } : {}),
         ...(patch.scene !== undefined ? { scene: patch.scene } : {}),
         ...(patch.files !== undefined ? { files: patch.files } : {}),
         ...(patch.chat !== undefined ? { chat: patch.chat } : {}),
+        history,
         updatedAt: new Date().toISOString(),
       };
       await fs.writeFile(file(id), JSON.stringify(next), "utf8");
@@ -71,6 +79,31 @@ export function createFileStore(): Store {
 
     async remove(id) {
       await fs.rm(file(id), { force: true });
+    },
+
+    async listVersions(id) {
+      const doc = await read(id);
+      return (doc?.history ?? []).map(
+        ({ id, savedAt, count }): DocVersionMeta => ({ id, savedAt, count }),
+      );
+    },
+
+    async restoreVersion(id, versionId) {
+      const doc = await read(id);
+      if (!doc) return null;
+      const version = doc.history.find((v) => v.id === versionId);
+      if (!version) return null;
+      // Snapshot the current scene first, so a restore can itself be undone.
+      const history = pushHistory(doc.history, { scene: doc.scene, title: doc.title }, Date.now());
+      const next: CanvasDoc = {
+        ...doc,
+        scene: version.scene,
+        title: version.title,
+        history,
+        updatedAt: new Date().toISOString(),
+      };
+      await fs.writeFile(file(id), JSON.stringify(next), "utf8");
+      return next;
     },
   };
 }

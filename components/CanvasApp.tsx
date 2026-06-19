@@ -16,7 +16,8 @@ import {
 import type { AgentEvent, ChatTurn, ImageInput } from "@/lib/types";
 import { AgentPanel, type ChatMessage, type SendOpts } from "@/components/AgentPanel";
 import { buildBriefMarkdown, slugify } from "@/lib/export";
-import { Download, PanelRightClose, PanelRightOpen } from "lucide-react";
+import { Download, History, PanelRightClose, PanelRightOpen } from "lucide-react";
+import type { DocVersionMeta } from "@/lib/store/types";
 
 const Excalidraw = dynamic(
   async () => (await import("@excalidraw/excalidraw")).Excalidraw,
@@ -83,6 +84,16 @@ function keepInView(api: any, justAdded: any[]) {
 
 let idCounter = 0;
 const nextId = () => `m${Date.now()}_${idCounter++}`;
+
+function ago(iso: string): string {
+  const s = Math.max(1, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
+  if (s < 60) return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return new Date(iso).toLocaleString();
+}
 
 // Shrink a data URL to a max edge and re-encode as JPEG, so sending canvas
 // images to the agent stays cheap.
@@ -153,6 +164,8 @@ export default function CanvasApp({ docId, initialTitle, initialScene, initialFi
   const [saveState, setSaveState] = useState<"saved" | "saving">("saved");
   const [exporting, setExporting] = useState(false);
   const [panelOpen, setPanelOpen] = useState(true);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [versions, setVersions] = useState<DocVersionMeta[]>([]);
 
   // Latest values for the debounced save closure.
   const messagesRef = useRef(messages);
@@ -163,6 +176,30 @@ export default function CanvasApp({ docId, initialTitle, initialScene, initialFi
   const updateScene = useCallback((elements: any[]) => {
     apiRef.current?.updateScene({ elements });
   }, []);
+
+  const openHistory = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/docs/${docId}/versions`);
+      const data = await res.json();
+      setVersions(data.versions ?? []);
+    } catch {
+      setVersions([]);
+    }
+    setHistoryOpen(true);
+  }, [docId]);
+
+  const restoreVersion = useCallback(
+    async (versionId: string) => {
+      await fetch(`/api/docs/${docId}/versions`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ versionId }),
+      });
+      // Reload so the canvas mounts with the restored scene.
+      window.location.reload();
+    },
+    [docId],
+  );
 
   // Export a handoff bundle: BRIEF.md (the conversation) + canvas.png (the
   // diagram), zipped — drop it into a repo for Claude Code / Codex.
@@ -416,6 +453,14 @@ export default function CanvasApp({ docId, initialTitle, initialScene, initialFi
           className="min-w-0 flex-1 bg-transparent text-sm font-medium text-ink outline-none placeholder:text-neutral-400"
         />
         <button
+          onClick={openHistory}
+          title="Version history"
+          aria-label="Version history"
+          className="rounded-md p-1.5 text-neutral-400 transition hover:bg-neutral-100 hover:text-ink"
+        >
+          <History className="h-4 w-4" />
+        </button>
+        <button
           onClick={exportDesign}
           disabled={exporting}
           title="Export the brief + diagram (for Claude Code / Codex)"
@@ -434,6 +479,37 @@ export default function CanvasApp({ docId, initialTitle, initialScene, initialFi
           {panelOpen ? <PanelRightClose className="h-4 w-4" /> : <PanelRightOpen className="h-4 w-4" />}
         </button>
       </header>
+
+      {historyOpen && (
+        <>
+          <div className="fixed inset-0 z-30" onClick={() => setHistoryOpen(false)} />
+          <div className="fixed right-2 top-12 z-40 w-72 overflow-hidden rounded-xl border border-line bg-white shadow-lg">
+            <div className="border-b border-line px-3 py-2 text-xs font-medium text-neutral-500">
+              Version history
+            </div>
+            {versions.length === 0 ? (
+              <p className="px-3 py-4 text-sm text-neutral-400">No earlier versions yet — they accrue as you edit.</p>
+            ) : (
+              <ul className="max-h-80 overflow-y-auto py-1">
+                {versions.map((v) => (
+                  <li key={v.id} className="flex items-center justify-between gap-2 px-3 py-1.5 hover:bg-paper/60">
+                    <span className="text-sm text-neutral-600">
+                      {v.count} element{v.count === 1 ? "" : "s"}
+                      <span className="text-neutral-400"> · {ago(v.savedAt)}</span>
+                    </span>
+                    <button
+                      onClick={() => restoreVersion(v.id)}
+                      className="shrink-0 rounded-md px-2 py-0.5 text-xs font-medium text-amber-600 transition hover:bg-amber-50"
+                    >
+                      Restore
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </>
+      )}
 
       <div className="flex flex-1 overflow-hidden">
         <div className="relative h-full flex-1">

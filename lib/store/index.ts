@@ -2,7 +2,7 @@ import { createFileStore } from "./file";
 import { createPostgresStore } from "./postgres";
 import type { Store } from "./types";
 
-export type { CanvasDoc, DocSummary, DocPatch, Store } from "./types";
+export type { CanvasDoc, DocSummary, DocPatch, DocVersion, DocVersionMeta, Store } from "./types";
 
 // Postgres when a connection string is set (Vercel/Neon), JSON files otherwise
 // (local dev, zero setup). DATABASE_URL is the manual name; POSTGRES_URL is what
